@@ -1,0 +1,274 @@
+/*******************************************************************************
+ * REG_A - Remote Register Module (A & D Registers)
+ * 
+ * Peer-to-Peer ESP-NOW Responder
+ * 
+ * This module handles:
+ * - RSA (Select A) - Returns current A register value
+ * - RSD (Select D) - Returns current D register value  
+ * - RLA (Load A) - Loads new value into A register
+ * - RLD (Load D) - Loads new value into D register
+ * 
+ * Communication:
+ * - Receives REQUEST messages from Master
+ * - Sends RESPONSE messages (ACKs) back to Master
+ * - Broadcasts operations for CYD Monitor to observe
+ * 
+ * Hardware:
+ *   ESP32-C3-SuperMini
+ *   MAC: 88:56:A6:78:7B:3C (Reg_A)
+ * 
+ * Author: Greg (with Claude assistance)
+ * Version: 1.0
+ * Date: February 2, 2026
+ ******************************************************************************/
+
+#include <esp_now.h>
+#include <WiFi.h>
+#include <esp_wifi.h>
+
+// =====================================================================================================
+// PEER-TO-PEER ESP-NOW COMMON DEFINITIONS
+// =====================================================================================================
+#include "../common/ESPNOW_Common.h"
+
+// Which device am I?
+#define MY_DEVICE_IDX  IDX_REG_A
+
+// =====================================================================================================
+// REGISTER VALUES
+// =====================================================================================================
+uint8_t regA = 0x00;  // A register (8-bit)
+uint8_t regD = 0x00;  // D register (8-bit)
+
+// =====================================================================================================
+// ESP-NOW CALLBACKS
+// =====================================================================================================
+
+void onDataSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
+  // Optional: Log send status
+  // if (status != ESP_NOW_SEND_SUCCESS) {
+  //   Serial.println("Send failed");
+  // }
+}
+
+void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
+  if (len != sizeof(P2PMessage)) {
+    Serial.println("⚠ Wrong message size");
+    return;
+  }
+  
+  P2PMessage msg;
+  memcpy(&msg, data, sizeof(msg));
+  
+  // Only respond to REQUEST messages intended for us
+  if (msg.msg_type != MSG_REQUEST || msg.dst_idx != MY_DEVICE_IDX) {
+    return;
+  }
+  
+  Serial.print("📥 Request from Master: ");
+  Serial.print(msg.signal);
+  Serial.print(" value=0x");
+  Serial.println(msg.value, HEX);
+  
+  // Prepare response message
+  P2PMessage response;
+  response.msg_type = MSG_RESPONSE;
+  response.seq_num = msg.seq_num;  // Echo sequence number
+  response.src_idx = MY_DEVICE_IDX;
+  response.dst_idx = IDX_MASTER;
+  response.data16 = msg.signal;  // Store original signal for reference
+  
+  // Handle the request based on signal type
+  switch (msg.signal) {
+    case RSA:  // Select A - Return current A value
+      response.signal = DRV_DBUS;  // Indicates we're driving data bus
+      response.value = regA;
+      Serial.print("📤 Sending A=0x");
+      Serial.println(regA, HEX);
+      
+      // Send ACK to Master
+      esp_now_send(info->src_addr, (uint8_t*)&response, sizeof(response));
+      
+      // Broadcast for monitoring
+      broadcastForMonitoring(RSA, 1);
+      broadcastForMonitoring(DBUS, regA);
+      break;
+      
+    case RSD:  // Select D - Return current D value
+      response.signal = DRV_DBUS;
+      response.value = regD;
+      Serial.print("📤 Sending D=0x");
+      Serial.println(regD, HEX);
+      
+      // Send ACK to Master
+      esp_now_send(info->src_addr, (uint8_t*)&response, sizeof(response));
+      
+      // Broadcast for monitoring
+      broadcastForMonitoring(RSD, 1);
+      broadcastForMonitoring(DBUS, regD);
+      break;
+      
+    case RLA:  // Load A - Store new value
+      regA = msg.value;
+      response.signal = ACK;  // Generic ACK
+      response.value = msg.value;  // Echo back the value
+      Serial.print("✓ Loaded A=0x");
+      Serial.println(regA, HEX);
+      
+      // Send ACK to Master
+      esp_now_send(info->src_addr, (uint8_t*)&response, sizeof(response));
+      
+      // Broadcast for monitoring
+      broadcastForMonitoring(RLA, regA);
+      break;
+      
+    case RLD:  // Load D - Store new value
+      regD = msg.value;
+      response.signal = ACK;
+      response.value = msg.value;
+      Serial.print("✓ Loaded D=0x");
+      Serial.println(regD, HEX);
+      
+      // Send ACK to Master
+      esp_now_send(info->src_addr, (uint8_t*)&response, sizeof(response));
+      
+      // Broadcast for monitoring
+      broadcastForMonitoring(RLD, regD);
+      break;
+      
+    default:
+      Serial.print("⚠ Unknown signal: ");
+      Serial.println(msg.signal);
+      response.signal = ACK;
+      response.value = 0xFF;  // Error indicator
+      esp_now_send(info->src_addr, (uint8_t*)&response, sizeof(response));
+      break;
+  }
+}
+
+// =====================================================================================================
+// BROADCAST FOR MONITORING
+// =====================================================================================================
+void broadcastForMonitoring(uint8_t signal, uint8_t value) {
+  P2PMessage msg;
+  msg.msg_type = MSG_BROADCAST;
+  msg.seq_num = 0;
+  msg.signal = signal;
+  msg.value = value;
+  msg.data16 = 0;
+  msg.src_idx = MY_DEVICE_IDX;
+  msg.dst_idx = 0xFF;  // Broadcast
+  
+  esp_now_send(broadcast_MAC, (uint8_t*)&msg, sizeof(msg));
+}
+
+// =====================================================================================================
+// SETUP
+// =====================================================================================================
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  Serial.println("\n================================");
+  Serial.println("    REG_A - Register Module");
+  Serial.println("    A & D Registers");
+  Serial.println("    Peer-to-Peer ESP-NOW");
+  Serial.println("================================");
+  
+  // Set WiFi mode
+  WiFi.mode(WIFI_STA);
+  delay(100);
+  
+  // Print MAC address
+  Serial.print("Reg_A MAC: ");
+  Serial.println(WiFi.macAddress());
+  
+  // Verify MAC matches expected address
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  if (memcmp(mac, regA_MAC, 6) != 0) {
+    Serial.println("⚠ WARNING: MAC mismatch!");
+    Serial.print("  Expected: ");
+    printMAC(regA_MAC);
+    Serial.println();
+    Serial.print("  Actual:   ");
+    printMAC(mac);
+    Serial.println();
+  }
+  
+  // Initialize ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("✗ ESP-NOW init failed");
+    return;
+  }
+  Serial.println("✓ ESP-NOW initialized");
+  
+  // Register callbacks
+  esp_now_register_send_cb(onDataSent);
+  esp_now_register_recv_cb(onDataRecv);
+  
+  // Register Master peer
+  esp_now_peer_info_t master_peer;
+  memset(&master_peer, 0, sizeof(master_peer));
+  memcpy(master_peer.peer_addr, master_MAC, 6);
+  master_peer.channel = 0;
+  master_peer.encrypt = false;
+  if (esp_now_add_peer(&master_peer) == ESP_OK) {
+    Serial.print("✓ Master registered: ");
+    printMAC(master_MAC);
+    Serial.println();
+  }
+  
+  // Register CYD Monitor for broadcasts
+  esp_now_peer_info_t cyd_peer;
+  memset(&cyd_peer, 0, sizeof(cyd_peer));
+  memcpy(cyd_peer.peer_addr, cyd_MAC, 6);
+  cyd_peer.channel = 0;
+  cyd_peer.encrypt = false;
+  if (esp_now_add_peer(&cyd_peer) == ESP_OK) {
+    Serial.print("✓ CYD Monitor registered: ");
+    printMAC(cyd_MAC);
+    Serial.println();
+  }
+  
+  // Register broadcast address
+  esp_now_peer_info_t broadcast_peer;
+  memset(&broadcast_peer, 0, sizeof(broadcast_peer));
+  memcpy(broadcast_peer.peer_addr, broadcast_MAC, 6);
+  broadcast_peer.channel = 0;
+  broadcast_peer.encrypt = false;
+  if (esp_now_add_peer(&broadcast_peer) == ESP_OK) {
+    Serial.println("✓ Broadcast registered");
+  }
+  
+  Serial.println("✓ Reg_A ready for peer-to-peer!");
+  Serial.println();
+  Serial.print("Initial A = 0x");
+  Serial.println(regA, HEX);
+  Serial.print("Initial D = 0x");
+  Serial.println(regD, HEX);
+  Serial.println();
+  Serial.println("=== Waiting for Master commands ===");
+  Serial.println();
+}
+
+// =====================================================================================================
+// MAIN LOOP
+// =====================================================================================================
+void loop() {
+  // Main loop just needs to process ESP-NOW callbacks
+  // No active work needed - we're purely reactive
+  
+  // Optional: Periodic status update
+  static unsigned long lastStatus = 0;
+  if (millis() - lastStatus > 10000) {  // Every 10 seconds
+    Serial.print("Status: A=0x");
+    Serial.print(regA, HEX);
+    Serial.print(" D=0x");
+    Serial.println(regD, HEX);
+    lastStatus = millis();
+  }
+  
+  delay(10);
+}

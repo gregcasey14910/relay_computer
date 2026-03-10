@@ -1,0 +1,17 @@
+# Garbage / backup directories
+Master-Garbage/
+master-garabge2/
+
+# PlatformIO build artifacts
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# VS Code
+.vscode/
+
+# Arduino build cache
+build/
+*.bin
+*.elf
+*.map

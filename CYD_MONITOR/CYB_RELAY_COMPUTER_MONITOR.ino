@@ -1,0 +1,963 @@
+/*
+ * CYD Relay Computer Monitor - PORTRAIT MODE
+ * 240x320 - Casey RELAY Comp
+ */
+
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
+
+// MCP23017 I2C - CYD CN1: SDA=GPIO27, SCL=GPIO22
+#define MCP_SDA       27
+#define MCP_SCL       22
+#define MCP_ADDR      0x20
+// MCP23017 registers (BANK=0 default)
+#define MCP_IODIRA    0x00
+#define MCP_IODIRB    0x01
+#define MCP_GPPUA     0x0C
+#define MCP_GPPUB     0x0D
+#define MCP_GPIOA     0x12
+#define MCP_GPIOB     0x13
+#define MCP_OLATA     0x14
+
+bool     mcp_found    = false;
+uint8_t  mcp_led_state  = 0x00;  // current LED output state (Port A)
+uint8_t  mcp_btn_state  = 0xFF;  // current button state (Port B, active LOW)
+String   lastSerialCmd  = "none";
+
+// Forward declarations
+void drawButtonAlert(int btn, int phase);
+void drawMCP();
+void drawStardate();
+void switchScreen(int newType);
+float getStardate();
+
+// Button alert state
+bool           alertActive  = false;
+int            alertButton  = 0;
+int            alertPhase   = 0;   // 0 = color1 fg, 1 = color2 fg
+unsigned long  alertStart   = 0;
+
+// CYD Pin definitions for HARDWARE SPI
+#define TFT_CS   15
+#define TFT_DC   2
+#define TFT_RST  -1
+#define TFT_BL   21
+
+// RGB LED pins on CYD (active LOW!)
+#define LED_RED   4
+#define LED_GREEN 16
+#define LED_BLUE  17
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+
+String macAddress = "";
+
+// Screen type selection (runtime — BTN1 cycles 1->2->3->1)
+int screen_type = 3;  // 1 = scrolling, 2 = ALU graphic, 3 = MCP23017 debug
+
+// ESP-NOW message structure
+typedef struct struct_message {
+  int cmd;
+  int bus_value;
+} struct_message;
+
+// Command enum
+enum RemoteCmd {
+  PING        = 0x0,   // Ping/heartbeat
+  SEL_REGA    = 0x1,   // Select Register A
+  SEL_REGD    = 0x2,   // Select Register D
+  SEL_AD      = 0x3,   // Select both A and D
+  CLK_REGA    = 0x11,  // Clock Register A
+  CLK_REGD    = 0x12,  // Clock Register D
+  CLK_AD      = 0x13,  // Clock both A and D
+
+  SEL_REGB    = 0x4,   // Select Register B
+  SEL_REGC    = 0x5,   // Select Register C
+  SEL_BC      = 0x6,   // Select both B and C
+  CLK_REGB    = 0x14,  // Clock Register B
+  CLK_REGC    = 0x15,  // Clock Register C
+  CLK_BC      = 0x16,  // Clock both B and C
+
+  SEL_REGM1   = 0x7,   // Select Register M1
+  SEL_REGM2   = 0x8,   // Select Register M2
+  SEL_M       = 0x9,   // Select both M1 and M2
+  CLK_REGM1   = 0x17,  // Clock Register M1
+  CLK_REGM2   = 0x18,  // Clock Register M2
+  CLK_M1M2    = 0x19,  // Clock both M1 and M2
+
+  SEL_REGX    = 0xa,   // Select Register X
+  SEL_REGY    = 0xb,   // Select Register Y
+  SEL_XY      = 0xc,   // Select both X and Y
+  CLK_REGX    = 0x1a,  // Clock Register X
+  CLK_REGY    = 0x1b,  // Clock Register Y
+  CLK_XY      = 0x1c,  // Clock both X and Y
+
+  SEL_REGJ1   = 0xd,   // Select Register J1
+  SEL_REGJ2   = 0xe,   // Select Register J2
+  SEL_J       = 0xf,   // Select both J1 and J2
+  CLK_REGJ1   = 0x1d,  // Clock Register J1
+  CLK_REGJ2   = 0x1e,  // Clock Register J2
+  CLK_J       = 0x1f,  // Clock both J1 and J2
+  
+  FCT_ALU     = 0x20,  // Function code to ALU
+  B_2_ALU     = 0x21,  // SEND BReg to ALU
+  C_2_ALU     = 0x22,  // Send CReg to ALU
+  BC_2_ALU    = 0x23,  // Send BC to ALU
+  ALU_rsv1    = 0x24,
+  ALU_COMBO   = 0x30,  // ALU output/result
+  ALU_2_DBUS  = 0x31,  // Gate ALU to DBUS
+  CLK_SR      = 0x32,  // Gate SR 
+  HCT_MS      = 0x33,  // implied codes for the 74HCT181 ALU
+  ALU_SCZ     = 0x34   // Sign, Carry, Zero status bits
+};
+
+// ALU display state (for screen_type = 2)
+uint8_t alu_b_value = 0;
+uint8_t alu_c_value = 0;
+uint8_t alu_f_code = 0;
+uint8_t alu_output = 0;  // ALU result/output
+uint8_t hct_ms = 0;      // 74HC181 M and S control bits
+uint8_t alu_scz = 0;     // Sign, Carry, Zero status bits
+
+// Message queue (for screen_type = 1)
+const int MAX_MESSAGES = 100;
+String messageLog[MAX_MESSAGES];
+int messageCount = 0;
+
+// Flag for new messages
+volatile bool newMessageFlag = false;
+String pendingMessage = "";
+
+const int lineHeight = 18;
+const int displayStartY = 50;
+const int displayHeight = 320 - displayStartY;
+const int maxVisibleLines = displayHeight / lineHeight;
+
+// Convert command code to name
+String getCommandName(int cmd) {
+  switch(cmd) {
+    case PING:        return "PING";
+    case SEL_REGA:    return "SEL_REGA";
+    case SEL_REGD:    return "SEL_REGD";
+    case SEL_AD:      return "SEL_AD";
+    case SEL_REGB:    return "SEL_REGB";
+    case SEL_REGC:    return "SEL_REGC";
+    case SEL_BC:      return "SEL_BC";
+    case SEL_REGM1:   return "SEL_M1";
+    case SEL_REGM2:   return "SEL_M2";
+    case SEL_M:       return "SEL_M";
+    case SEL_REGX:    return "SEL_X";
+    case SEL_REGY:    return "SEL_Y";
+    case SEL_XY:      return "SEL_XY";
+    case SEL_REGJ1:   return "SEL_J1";
+    case SEL_REGJ2:   return "SEL_J2";
+    case SEL_J:       return "SEL_J";
+    
+    case CLK_REGA:    return "CLK_REGA";
+    case CLK_REGD:    return "CLK_REGD";
+    case CLK_AD:      return "CLK_AD";
+    case CLK_REGB:    return "CLK_REGB";
+    case CLK_REGC:    return "CLK_REGC";
+    case CLK_BC:      return "CLK_BC";
+    case CLK_REGM1:   return "CLK_M1";
+    case CLK_REGM2:   return "CLK_M2";
+    case CLK_M1M2:    return "CLK_M";
+    case CLK_REGX:    return "CLK_X";
+    case CLK_REGY:    return "CLK_Y";
+    case CLK_XY:      return "CLK_XY";
+    case CLK_REGJ1:   return "CLK_J1";
+    case CLK_REGJ2:   return "CLK_J2";
+    case CLK_J:       return "CLK_J";
+    
+    case FCT_ALU:     return "F__ALU";
+    case B_2_ALU:     return "B->ALU";
+    case C_2_ALU:     return "C->ALU";
+    case BC_2_ALU:    return "BC->ALU";
+    case ALU_rsv1:    return "ALU_r1";
+    case ALU_COMBO:   return "ALU_OUT";
+    case ALU_2_DBUS:  return "ALU->DB";
+    case CLK_SR:      return "CLK_SR";
+    case HCT_MS:      return "HCT_MS";
+    case ALU_SCZ:     return "ALU_SCZ";
+    
+    default:
+      char hexbuf[8];
+      sprintf(hexbuf, "?%02X", cmd);
+      return String(hexbuf);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  Serial.println("\n======================");
+  Serial.println("CYD ESP-NOW Monitor");
+  Serial.println("PORTRAIT MODE");
+  Serial.println("======================");
+  
+  // Init RGB LED pins (active LOW - HIGH = OFF)
+  pinMode(LED_RED, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_BLUE, OUTPUT);
+  digitalWrite(LED_RED, HIGH);   // OFF
+  digitalWrite(LED_GREEN, HIGH); // OFF
+  digitalWrite(LED_BLUE, HIGH);  // OFF
+  
+  // Backlight ON
+  pinMode(TFT_BL, OUTPUT);
+  digitalWrite(TFT_BL, HIGH);
+  
+  // Init Hardware SPI
+  SPI.begin(14, 12, 13, 15);
+  
+  // Init display
+  Serial.println("Init display...");
+  tft.begin(40000000);
+  tft.setRotation(2);  // 180 degrees - USB cable at top
+  tft.fillScreen(ILI9341_BLACK);
+  
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(10, 150);
+  tft.print("Starting...");
+  delay(1000);
+  
+  // Get MAC
+  Serial.println("Init WiFi...");
+  WiFi.mode(WIFI_STA);
+  delay(500);
+  
+  uint8_t mac[6];
+  esp_wifi_get_mac(WIFI_IF_STA, mac);
+  char macStr[18];
+  sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
+          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  macAddress = String(macStr);
+  
+  Serial.print("MAC: ");
+  Serial.println(macAddress);
+  Serial.print("Max visible lines: ");
+  Serial.println(maxVisibleLines);
+  
+  WiFi.disconnect();
+  
+  // Init ESP-NOW
+  Serial.println("Init ESP-NOW...");
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW FAILED!");
+    tft.fillScreen(ILI9341_RED);
+    tft.setCursor(10, 150);
+    tft.print("ESP-NOW");
+    tft.setCursor(10, 170);
+    tft.print("FAILED!");
+    while(1) delay(1000);
+  }
+  
+  esp_now_register_recv_cb(onDataReceive);
+  Serial.println("ESP-NOW Ready!");
+  
+  // Draw UI
+  tft.fillScreen(ILI9341_BLACK);
+  drawHeader();
+  drawMacBanner();
+  
+  if (screen_type == 1) {
+    tft.setTextSize(2);
+    tft.setTextColor(ILI9341_GREEN);
+    tft.setCursor(5, displayStartY);
+    tft.print("Listening...");
+  } else if (screen_type == 2) {
+    drawALU();
+  } else if (screen_type == 3) {
+    initMCP();
+    drawMCP();
+    testLEDs();
+  }
+
+  Serial.println("Ready!\n");
+  if (screen_type == 3) {
+    Serial.println("MCP23017 Serial Commands:");
+    Serial.println("  TEST   : Walk LED test");
+    Serial.println("  L1-L8  : Toggle LED");
+    Serial.println("  LA     : All LEDs ON");
+    Serial.println("  LX     : All LEDs OFF");
+    Serial.println("  B?     : Read buttons");
+    Serial.println("  SCAN   : I2C scan");
+  }
+}
+
+void loop() {
+  // Check for new message
+  if (newMessageFlag) {
+    String msg = pendingMessage;
+    newMessageFlag = false;
+    
+    // Flash RANDOM color on RGB LED
+    // Active LOW - so random 0 or 1, then invert
+    bool r = random(0, 2) == 0; // random ON/OFF
+    bool g = random(0, 2) == 0;
+    bool b = random(0, 2) == 0;
+    
+    // Write inverted (LOW = ON)
+    digitalWrite(LED_RED, !r);
+    digitalWrite(LED_GREEN, !g);
+    digitalWrite(LED_BLUE, !b);
+    
+    if (screen_type == 1) {
+      // Add to log for scrolling display
+      if (messageCount < MAX_MESSAGES) {
+        messageLog[messageCount] = msg;
+        messageCount++;
+      } else {
+        // Shift up in buffer
+        for (int i = 0; i < MAX_MESSAGES - 1; i++) {
+          messageLog[i] = messageLog[i + 1];
+        }
+        messageLog[MAX_MESSAGES - 1] = msg;
+      }
+      
+      Serial.print("RX: ");
+      Serial.println(msg);
+      
+      // Redraw display
+      redrawDisplay();
+    } else if (screen_type == 2) {
+      // ALU display mode - just redraw
+      Serial.print("RX: ");
+      Serial.println(msg);
+      drawALU();
+    }
+  }
+  
+  // Serial command handler (screen_type=3)
+  static String serialBuf = "";
+  while (screen_type == 3 && Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialBuf.length() == 0) continue;
+      String cmd = serialBuf;
+      serialBuf = "";
+      cmd.trim();
+      cmd.toUpperCase();
+      lastSerialCmd = cmd;
+
+      if (cmd == "TEST") {
+        lastSerialCmd = cmd;
+        testLEDs();
+        drawMCP();
+      } else if (cmd == "SCAN") {
+        Serial.println("Scanning I2C...");
+        for (uint8_t addr = 1; addr < 127; addr++) {
+          Wire.beginTransmission(addr);
+          if (Wire.endTransmission() == 0) {
+            Serial.printf("  Found device at 0x%02X\n", addr);
+          }
+        }
+        Serial.println("Scan done.");
+      } else if (cmd == "LA") {
+        mcp_led_state = 0xFF;
+        mcpWriteReg(MCP_OLATA, mcp_led_state);
+        Serial.println("All LEDs ON");
+        drawMCP();
+      } else if (cmd == "LX") {
+        mcp_led_state = 0x00;
+        mcpWriteReg(MCP_OLATA, mcp_led_state);
+        Serial.println("All LEDs OFF");
+        drawMCP();
+      } else if (cmd == "B?") {
+        // Show latched LED state (mirrors button toggles)
+        Serial.printf("LED latch state: 0x%02X\n", mcp_led_state);
+        for (int i = 0; i < 8; i++) {
+          bool on = (mcp_led_state >> (7 - i)) & 0x01;
+          Serial.printf("  LED/BTN%d: %s\n", i+1, on ? "ON" : "off");
+        }
+        drawMCP();
+      } else if (cmd.startsWith("B") && cmd.length() == 2 && cmd.charAt(1) >= '1' && cmd.charAt(1) <= '8') {
+        int n = cmd.charAt(1) - '1';  // 0-7 — simulate button press
+        if (n == 0) {
+          // B1: cycle screen type
+          int nextType = (screen_type % 3) + 1;
+          switchScreen(nextType);
+        } else {
+          mcp_led_state ^= (1 << (7 - n));
+          mcpWriteReg(MCP_OLATA, mcp_led_state);
+          Serial.printf("BTN%d simulated -> LED%d %s\n", n+1, n+1, (mcp_led_state >> (7-n)) & 0x01 ? "ON" : "off");
+          alertActive = true;
+          alertButton = n + 1;
+          alertStart  = millis();
+          alertPhase  = 0;
+          drawButtonAlert(alertButton, alertPhase);
+        }
+      } else if (cmd.startsWith("L") && cmd.length() == 2) {
+        int n = cmd.charAt(1) - '1';  // 0-7
+        if (n >= 0 && n <= 7) {
+          mcp_led_state ^= (1 << (7 - n));  // toggle (LED1=bit7, LED8=bit0)
+          mcpWriteReg(MCP_OLATA, mcp_led_state);
+          Serial.printf("LED%d toggled -> 0x%02X\n", n+1, mcp_led_state);
+          drawMCP();
+        }
+      } else {
+        Serial.printf("Unknown cmd: %s\n", cmd.c_str());
+      }
+    } else {
+      serialBuf += c;
+    }
+  }
+
+  // Button polling - every 100ms (all screen types — BTN1 cycles screens)
+  // Debounce: button must read pressed on 2 consecutive polls (~200ms) to fire
+  if (mcp_found) {
+    static unsigned long lastBtnPoll = 0;
+    static uint8_t btnPressCnt[8] = {0};  // consecutive low-reading counter per button
+    if (millis() - lastBtnPoll >= 100) {
+      lastBtnPoll = millis();
+      uint8_t newBtnState = mcpReadReg(MCP_GPIOB);
+      mcp_btn_state = newBtnState;
+      bool needRedraw = false;
+      for (int i = 0; i < 8; i++) {
+        bool pressed = !((newBtnState >> i) & 0x01);  // active LOW, BTN1=bit0
+        if (pressed) {
+          btnPressCnt[i]++;
+          if (btnPressCnt[i] == 2) {  // fire on 2nd consecutive press reading
+            Serial.printf("BTN%d pressed\n", i + 1);
+            if (i == 0) {
+              // BTN1: cycle screen type 1->2->3->1
+              int nextType = (screen_type % 3) + 1;
+              switchScreen(nextType);
+            } else if (screen_type == 3) {
+              // Other buttons: toggle LED + alert (only in MCP screen)
+              mcp_led_state ^= (1 << (7 - i));
+              mcpWriteReg(MCP_OLATA, mcp_led_state);
+              alertActive = true;
+              alertButton = i + 1;
+              alertStart  = millis();
+              alertPhase  = 0;
+              drawButtonAlert(alertButton, alertPhase);
+            }
+          }
+        } else {
+          if (btnPressCnt[i] > 0) needRedraw = true;
+          btnPressCnt[i] = 0;  // reset on release
+        }
+      }
+      if (screen_type == 3 && !alertActive && needRedraw) drawMCP();
+    }
+  }
+
+  // Alert display management
+  if (screen_type == 3 && alertActive) {
+    unsigned long elapsed = millis() - alertStart;
+    if (elapsed >= 6000) {
+      alertActive = false;
+      tft.fillScreen(ILI9341_BLACK);
+      drawHeader();
+      drawMacBanner();
+      drawMCP();
+    } else {
+      int newPhase = (elapsed / 500) % 2;
+      if (newPhase != alertPhase) {
+        alertPhase = newPhase;
+        drawButtonAlert(alertButton, alertPhase);
+      }
+    }
+  }
+
+  // Uptime + stardate update (suppressed during alert)
+  if (screen_type == 3 && !alertActive) {
+    static unsigned long lastUptimeDraw = 0;
+    static unsigned long lastSdDraw = 0;
+    unsigned long now = millis();
+    if (now - lastUptimeDraw >= 1000) {
+      lastUptimeDraw = now;
+      drawUptime();
+    }
+    if (now - lastSdDraw >= 60000) {
+      lastSdDraw = now;
+      drawStardate();
+    }
+  }
+
+  delay(50);
+}
+
+void drawUptime() {
+  unsigned long t = millis() / 1000;
+  uint16_t hh = t / 3600;
+  uint8_t  mm = (t % 3600) / 60;
+  uint8_t  ss = t % 60;
+  char buf[9];
+  snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hh, mm, ss);
+
+  // Clear label + uptime rows
+  tft.fillRect(0, 270, 240, 46, ILI9341_BLACK);
+  // "POWER ON TIMER" label - textSize 2, centered (14 chars * 12px = 168px, x=(240-168)/2=36)
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(36, 272);
+  tft.print("POWER ON TIMER");
+  // Time value
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_YELLOW);
+  tft.setCursor(48, 290);
+  tft.print(buf);
+}
+
+// ESP-NOW callback
+void onDataReceive(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
+  // Parse struct
+  struct_message receivedData;
+  memcpy(&receivedData, incomingData, sizeof(receivedData));
+  
+  if (screen_type == 1) {
+    // Scrolling mode - format as text
+    String cmdName = getCommandName(receivedData.cmd);
+    char buffer[40];
+    sprintf(buffer, "%-9s:0x%02X", cmdName.c_str(), receivedData.bus_value);
+    pendingMessage = String(buffer);
+  } else if (screen_type == 2) {
+    // ALU graphic mode - update state
+    if (receivedData.cmd == FCT_ALU) {
+      alu_f_code = receivedData.bus_value & 0x07;  // Lower 3 bits
+    } else if (receivedData.cmd == B_2_ALU) {
+      alu_b_value = receivedData.bus_value;
+    } else if (receivedData.cmd == C_2_ALU) {
+      alu_c_value = receivedData.bus_value;
+    } else if (receivedData.cmd == ALU_COMBO) {
+      alu_output = receivedData.bus_value;  // ALU result
+    } else if (receivedData.cmd == HCT_MS) {
+      hct_ms = receivedData.bus_value;  // Store M and S bits
+    } else if (receivedData.cmd == ALU_SCZ) {
+      alu_scz = receivedData.bus_value;  // Store SCZ status bits
+    }
+    pendingMessage = "ALU_UPDATE";
+  }
+  
+  newMessageFlag = true;
+}
+
+void redrawDisplay() {
+  // Clear message area
+  tft.fillRect(0, displayStartY, 240, displayHeight, ILI9341_BLACK);
+  
+  // Figure out which messages to display (last N messages)
+  int numToShow = min(messageCount, maxVisibleLines);
+  int startIdx = messageCount - numToShow;
+  
+  // Draw messages from top to bottom
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_YELLOW);
+  
+  for (int i = 0; i < numToShow; i++) {
+    int msgIdx = startIdx + i;
+    int yPos = displayStartY + (i * lineHeight);
+    
+    tft.setCursor(5, yPos);
+    tft.print(messageLog[msgIdx]);
+  }
+}
+
+// Get ALU function name from F code
+String getALUFunctionName(uint8_t fcode) {
+  switch(fcode & 0x07) {  // Ensure only 3 bits
+    case 0: return "CLR";
+    case 1: return "ADD";
+    case 2: return "INC";
+    case 3: return "AND";
+    case 4: return "OR";
+    case 5: return "XOR";
+    case 6: return "NOT";
+    case 7: return "SHL";
+    default: return "???";
+  }
+}
+
+void drawALU() {
+  // Clear working area (below banners)
+  tft.fillRect(0, displayStartY, 240, displayHeight, ILI9341_BLACK);
+  
+  // ALU trapezoid coordinates - NARROWER, WIDE on LEFT (inputs), NARROW on RIGHT (output)
+  int16_t x_left = 80;     // Left edge (wide side)
+  int16_t x_right = 180;   // Right edge (narrow side)
+  int16_t y_top = 120;     // Moved down more to make room for function line
+  int16_t y_bottom = 260;
+  int16_t y_center = (y_top + y_bottom) / 2;
+  
+  // Calculate narrow right side points
+  int16_t y_right_top = y_center - 25;
+  int16_t y_right_bottom = y_center + 25;
+  
+  // Calculate center point of trapezoid top edge for function leader
+  int16_t trap_top_center_x = (x_left + x_right) / 2;
+  int16_t trap_top_center_y = (y_top + y_right_top) / 2;
+  
+  // Draw ALU body (trapezoid - wide left, narrow right)
+  tft.drawLine(x_left, y_top, x_right, y_right_top, ILI9341_GREEN);           // Top edge
+  tft.drawLine(x_left, y_bottom, x_right, y_right_bottom, ILI9341_GREEN);     // Bottom edge
+  tft.drawLine(x_left, y_top, x_left, y_bottom, ILI9341_GREEN);               // Left edge (wide)
+  tft.drawLine(x_right, y_right_top, x_right, y_right_bottom, ILI9341_GREEN); // Right edge (narrow)
+  
+  // Draw function code (top center) with line leader from top of trapezoid
+  int16_t fct_y = 70;
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_YELLOW);
+  tft.setCursor(80, fct_y);
+  tft.print("F=");
+  tft.print(alu_f_code, HEX);
+  tft.print(" ");  // Space
+  tft.print(getALUFunctionName(alu_f_code));
+  
+  // Line from center-top of trapezoid to just below FCT text
+  int16_t fct_text_bottom = fct_y + 21;  // Text size 3 is ~21 pixels tall
+  tft.drawLine(trap_top_center_x, trap_top_center_y, trap_top_center_x, fct_text_bottom + 2, ILI9341_YELLOW);
+  
+  // Draw input B (top left) - OUTSIDE trapezoid
+  int16_t b_y = y_top + 30;
+  tft.drawLine(10, b_y, x_left, b_y, ILI9341_CYAN);
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_CYAN);
+  tft.setCursor(10, b_y - 15);
+  tft.print("B");
+  tft.setCursor(10, b_y + 5);
+  char bufB[8];
+  sprintf(bufB, "0x%02X", alu_b_value);
+  tft.print(bufB);
+  
+  // Draw input C (bottom left) - OUTSIDE trapezoid
+  int16_t c_y = y_bottom - 30;
+  tft.drawLine(10, c_y, x_left, c_y, ILI9341_CYAN);
+  tft.setTextColor(ILI9341_CYAN);
+  tft.setCursor(10, c_y - 15);
+  tft.print("C");
+  tft.setCursor(10, c_y + 5);
+  char bufC[8];
+  sprintf(bufC, "0x%02X", alu_c_value);
+  tft.print(bufC);
+  
+  // Draw output (right side - from narrow end) - RIGHT JUSTIFIED at end of line
+  int16_t out_line_end = 230;
+  tft.drawLine(x_right, y_center, out_line_end, y_center, ILI9341_MAGENTA);
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_MAGENTA);
+  
+  // Right justify text at x=230 (each char is ~12 pixels wide at size 2)
+  // "OUT" = 3 chars = 36 pixels, "0xXX" = 4 chars = 48 pixels
+  tft.setCursor(out_line_end - 36, y_center - 15);
+  tft.print("OUT");
+  tft.setCursor(out_line_end - 48, y_center + 5);
+  char bufOut[8];
+  sprintf(bufOut, "0x%02X", alu_output);
+  tft.print(bufOut);
+  
+  // Draw "ALU" label in center
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(105, y_center - 15);
+  tft.print("ALU");
+  
+  // Display 74HC181 M and S control bits below trapezoid
+  int16_t hct_y = y_bottom + 15;  // Position below trapezoid
+  tft.setTextSize(1);  // Smaller font
+  tft.setTextColor(ILI9341_ORANGE);
+  
+  // Extract M bit (bit 4) and S bits (bits 3-0)
+  uint8_t m_bit = (hct_ms >> 4) & 0x01;
+  uint8_t s_bits = hct_ms & 0x0F;
+  
+  // Center align under ALU - "74FHCT181" is about 54 pixels at size 1
+  tft.setCursor(93, hct_y);
+  tft.print("74FHCT181");
+  
+  // Second line with M and S values
+  tft.setCursor(80, hct_y + 10);
+  tft.print("M=");
+  tft.print(m_bit);
+  tft.print(" S=");
+  
+  // Print S as 4-bit binary
+  for (int i = 3; i >= 0; i--) {
+    tft.print((s_bits >> i) & 0x01);
+  }
+  
+  // Display Sign, Carry, Zero status flags in lower right
+  // Position under OUT area, moved down 2 rows, RIGHT JUSTIFIED
+  tft.setTextSize(2);  // Same as B, C, OUT
+  
+  // Extract status bits
+  bool sign_bit = (alu_scz >> 2) & 0x01;   // Bit 2
+  bool carry_bit = (alu_scz >> 1) & 0x01;  // Bit 1
+  bool zero_bit = alu_scz & 0x01;          // Bit 0
+  
+  int16_t status_right_edge = 230;  // Right edge of display area
+  int16_t status_start_y = y_center + 30 + 36;  // Below OUT value + 2 rows (2 * 18)
+  int16_t status_line_height = 18;
+  
+  // Text size 2: each character is ~12 pixels wide
+  // "Sign" = 4 chars = 48 pixels
+  // "Carry" = 5 chars = 60 pixels  
+  // "Zero" = 4 chars = 48 pixels
+  
+  // Sign - Green if 1, Red if 0 - RIGHT JUSTIFIED
+  tft.setCursor(status_right_edge - 48, status_start_y);
+  tft.setTextColor(sign_bit ? ILI9341_GREEN : ILI9341_RED);
+  tft.print("Sign");
+  
+  // Carry - Green if 1, Red if 0 - RIGHT JUSTIFIED
+  tft.setCursor(status_right_edge - 60, status_start_y + status_line_height);
+  tft.setTextColor(carry_bit ? ILI9341_GREEN : ILI9341_RED);
+  tft.print("Carry");
+  
+  // Zero - Green if 1, Red if 0 - RIGHT JUSTIFIED
+  tft.setCursor(status_right_edge - 48, status_start_y + (status_line_height * 2));
+  tft.setTextColor(zero_bit ? ILI9341_GREEN : ILI9341_RED);
+  tft.print("Zero");
+}
+
+// === MCP23017 Functions ===
+
+void mcpWriteReg(uint8_t reg, uint8_t val) {
+  if (!mcp_found) return;
+  Wire.beginTransmission(MCP_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  Wire.endTransmission();
+}
+
+uint8_t mcpReadReg(uint8_t reg) {
+  if (!mcp_found) return 0xFF;
+  Wire.beginTransmission(MCP_ADDR);
+  Wire.write(reg);
+  Wire.endTransmission();
+  Wire.requestFrom(MCP_ADDR, 1);
+  return Wire.available() ? Wire.read() : 0xFF;
+}
+
+void initMCP() {
+  Wire.begin(MCP_SDA, MCP_SCL);
+  Serial.println("Init MCP23017...");
+  Wire.beginTransmission(MCP_ADDR);
+  mcp_found = (Wire.endTransmission() == 0);
+
+  if (mcp_found) {
+    mcpWriteReg(MCP_IODIRA, 0x00);  // Port A = all outputs (LEDs)
+    mcpWriteReg(MCP_IODIRB, 0xFF);  // Port B = all inputs (buttons)
+    mcpWriteReg(MCP_GPPUB,  0xFF);  // Port B pull-ups enabled
+    mcpWriteReg(MCP_OLATA,  0x00);  // All LEDs off
+    Serial.println("MCP23017 OK at 0x20");
+  } else {
+    Serial.println("MCP23017 NOT FOUND - display only mode");
+  }
+}
+
+void testLEDs() {
+  if (!mcp_found) {
+    Serial.println("TEST: MCP not found, skipping");
+    return;
+  }
+  Serial.println("LED walk test - start");
+  // Walk forward
+  for (int i = 0; i < 8; i++) {
+    mcp_led_state = (1 << (7 - i));  // LED1=bit7 ... LED8=bit0
+    mcpWriteReg(MCP_OLATA, mcp_led_state);
+    drawMCP();
+    delay(150);
+  }
+  // All on
+  mcp_led_state = 0xFF;
+  mcpWriteReg(MCP_OLATA, mcp_led_state);
+  drawMCP();
+  delay(400);
+  // All off
+  mcp_led_state = 0x00;
+  mcpWriteReg(MCP_OLATA, mcp_led_state);
+  drawMCP();
+  Serial.println("LED walk test - done");
+}
+
+void getButtonColors(int btn, uint16_t &col1, uint16_t &col2) {
+  switch (btn) {
+    case 1: case 2: col1 = ILI9341_BLUE;   col2 = ILI9341_WHITE;  break;
+    case 3: case 7: col1 = ILI9341_WHITE;  col2 = ILI9341_BLACK;  break;
+    case 4:         col1 = ILI9341_GREEN;  col2 = ILI9341_YELLOW; break;
+    case 5: case 6: col1 = ILI9341_YELLOW; col2 = ILI9341_BLACK; break;
+    case 8:         col1 = ILI9341_RED;    col2 = ILI9341_BLACK;  break;
+    default:        col1 = ILI9341_WHITE;  col2 = ILI9341_BLACK;  break;
+  }
+}
+
+void drawButtonAlert(int btn, int phase) {
+  uint16_t col1, col2;
+  getButtonColors(btn, col1, col2);
+  uint16_t fg = (phase == 0) ? col1 : col2;
+  uint16_t bg = (phase == 0) ? col2 : col1;
+
+  tft.fillScreen(bg);
+
+  // Big number centered - textSize 8 = 48x64 per char
+  char buf[4];
+  sprintf(buf, "%d", btn);
+  int charW = 6 * 8;
+  int charH = 8 * 8;
+  int totalW = charW * strlen(buf);
+  tft.setTextSize(8);
+  tft.setTextColor(fg);
+  tft.setCursor((240 - totalW) / 2, (320 - charH) / 2);
+  tft.print(buf);
+
+  // Small label
+  tft.setTextSize(2);
+  tft.setTextColor(fg);
+  tft.setCursor(75, 270);
+  tft.print("BTN ");
+  tft.print(btn);
+}
+
+void drawMCP() {
+  // Clear working area
+  tft.fillRect(0, displayStartY, 240, displayHeight, ILI9341_BLACK);
+
+  // MCP status line
+  tft.setTextSize(2);
+  if (mcp_found) {
+    tft.setTextColor(ILI9341_GREEN);
+    tft.setCursor(5, displayStartY + 2);
+    tft.print("MCP OK @ 0x20");
+  } else {
+    tft.setTextColor(ILI9341_RED);
+    tft.setCursor(5, displayStartY + 2);
+    tft.print("MCP NOT FOUND");
+  }
+
+  // LED circles - row of 8
+  int16_t led_y = displayStartY + 35;
+  tft.setTextSize(1);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(5, led_y - 10);
+  tft.print("LEDs:");
+
+  int16_t cx_start = 15;
+  int16_t cx_step  = 28;
+  int16_t radius   = 11;
+
+  for (int i = 0; i < 8; i++) {
+    int16_t cx = cx_start + (i * cx_step);
+    bool on = (mcp_led_state >> (7 - i)) & 0x01;  // LED1=bit7
+    uint16_t color = on ? ILI9341_YELLOW : 0x4208;  // yellow or dark grey
+    tft.fillCircle(cx, led_y + 5, radius, color);
+    tft.drawCircle(cx, led_y + 5, radius, ILI9341_WHITE);
+    // LED number
+    tft.setTextSize(1);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setCursor(cx - 3, led_y + 1);
+    tft.print(i + 1);
+  }
+
+  drawStardate();
+}
+
+float getBootStardate() {
+  // __DATE__ = "Mmm DD YYYY"  __TIME__ = "HH:MM:SS"  (set at compile time)
+  static const char mon_names[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  char mon[4] = {__DATE__[0], __DATE__[1], __DATE__[2], 0};
+  int month = (strstr(mon_names, mon) - mon_names) / 3 + 1;
+  int day   = atoi(__DATE__ + 4);
+  int year  = atoi(__DATE__ + 7);
+  int hour  = atoi(__TIME__);
+  int min   = atoi(__TIME__ + 3);
+  int sec   = atoi(__TIME__ + 6);
+
+  // Day of year
+  static const int mdays[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
+  bool leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+  int doy = day;
+  for (int i = 1; i < month; i++) doy += mdays[i];
+  if (leap && month > 2) doy++;
+
+  // Days since Jan 1 1970
+  long days70 = 0;
+  for (int y = 1970; y < year; y++) {
+    bool ly = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+    days70 += ly ? 366 : 365;
+  }
+  days70 += doy - 1;
+
+  // TNG epoch: Sept 28, 1987 = stardate 41153.7 = day 6479 since Jan 1 1970
+  const long TNG_DAYS = 6479;
+  const float TNG_SD  = 41153.7f;
+
+  float day_frac = (hour * 3600.0f + min * 60.0f + sec) / 86400.0f;
+  float days_since_tng = (days70 - TNG_DAYS) + day_frac;
+  return TNG_SD + days_since_tng * (1000.0f / 365.25f);
+}
+
+float getStardate() {
+  // Boot stardate fixed at compile time; millis() advances it in real time
+  static float bootSD = getBootStardate();
+  return bootSD + (millis() / 1000.0f) / 31557.6f;  // 31557.6 sec per stardate unit
+}
+
+void drawStardate() {
+  float sd = getStardate();
+  int sd_int = (int)sd;
+  int sd_dec = (int)((sd - sd_int) * 10) % 10;
+  char sdbuf[12];
+  sprintf(sdbuf, "%d.%d", sd_int, sd_dec);
+
+  // Clear stardate area (below LED circles, above uptime)
+  tft.fillRect(0, 110, 240, 155, ILI9341_BLACK);
+
+  // "STARDATE" label — textSize 2, centered (8 chars * 12px = 96px, x=72)
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_CYAN);
+  tft.setCursor(72, 125);
+  tft.print("STARDATE");
+
+  // Number — textSize 5 (30px/char wide, 40px tall)
+  int sdW = strlen(sdbuf) * 30;
+  tft.setTextSize(5);
+  tft.setTextColor(ILI9341_YELLOW);
+  tft.setCursor((240 - sdW) / 2, 148);
+  tft.print(sdbuf);
+}
+
+void switchScreen(int newType) {
+  screen_type = newType;
+  alertActive = false;
+  tft.fillScreen(ILI9341_BLACK);
+  drawHeader();
+  drawMacBanner();
+  if (screen_type == 1) {
+    tft.setTextSize(2);
+    tft.setTextColor(ILI9341_GREEN);
+    tft.setCursor(5, displayStartY);
+    tft.print("Listening...");
+  } else if (screen_type == 2) {
+    drawALU();
+  } else if (screen_type == 3) {
+    drawMCP();
+  }
+  Serial.printf("Screen -> type %d\n", screen_type);
+}
+
+void drawHeader() {
+  // Blue header - "Casey RELAY Comp"
+  tft.fillRect(0, 0, 240, 25, ILI9341_BLUE);
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+  tft.setCursor(72, 5);
+  tft.print("ETC 9000");
+}
+
+void drawMacBanner() {
+  // Cyan MAC banner
+  tft.fillRect(0, 25, 240, 23, ILI9341_CYAN);
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_BLACK);
+  tft.setCursor(5, 28);
+  tft.print(macAddress);
+}
