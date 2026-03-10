@@ -33,6 +33,7 @@ String   lastSerialCmd  = "none";
 void drawButtonAlert(int btn, int phase);
 void drawMCP();
 void drawStardate();
+void drawNodeRegistry();
 void switchScreen(int newType);
 float getStardate();
 
@@ -57,8 +58,17 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 
 String macAddress = "";
 
-// Screen type selection (runtime — BTN1 cycles 1->2->3->1)
-int screen_type = 3;  // 1 = scrolling, 2 = ALU graphic, 3 = MCP23017 debug
+// Screen type selection (runtime — BTN1 cycles 1->2->3->4->1)
+int screen_type = 3;  // 1 = scrolling, 2 = ALU graphic, 3 = MCP23017 debug, 4 = node registry
+
+// Node registry (from hardware.md)
+struct NodeInfo { const char *name; const char *port; const char *mac; };
+static const NodeInfo nodes[] = {
+  { "Master",  "COM28", "AC:A7:04:BC:06:60" },
+  { "CYD Mon", "COM13", "30:C9:22:32:34:38" },
+  { "ALU",     "COM11", "20:6E:F1:B0:DC:18" },
+};
+static const int nodeCount = 3;
 
 // Signal definitions and P2PMessage struct - from shared common header
 #include "../common/P2P_Signals.h"
@@ -177,6 +187,8 @@ void setup() {
     initMCP();
     drawMCP();
     testLEDs();
+  } else if (screen_type == 4) {
+    drawNodeRegistry();
   }
 
   Serial.println("Ready!\n");
@@ -280,7 +292,7 @@ void loop() {
         int n = cmd.charAt(1) - '1';  // 0-7 — simulate button press
         if (n == 0) {
           // B1: cycle screen type
-          int nextType = (screen_type % 3) + 1;
+          int nextType = (screen_type % 4) + 1;
           switchScreen(nextType);
         } else {
           mcp_led_state ^= (1 << (7 - n));
@@ -326,7 +338,7 @@ void loop() {
             Serial.printf("BTN%d pressed\n", i + 1);
             if (i == 0) {
               // BTN1: cycle screen type 1->2->3->1
-              int nextType = (screen_type % 3) + 1;
+              int nextType = (screen_type % 4) + 1;
               switchScreen(nextType);
             } else if (screen_type == 3) {
               // Other buttons: toggle LED + alert (only in MCP screen)
@@ -820,6 +832,43 @@ void drawStardate() {
   tft.print(sdbuf);
 }
 
+void drawNodeRegistry() {
+  tft.fillRect(0, displayStartY, 240, displayHeight, ILI9341_BLACK);
+
+  // Subtitle
+  tft.setTextSize(2);
+  tft.setTextColor(ILI9341_CYAN);
+  tft.setCursor(24, displayStartY + 2);
+  tft.print("Coms and MAC");
+
+  tft.drawLine(0, displayStartY + 20, 240, displayStartY + 20, ILI9341_WHITE);
+
+  int y = displayStartY + 26;
+  for (int i = 0; i < nodeCount; i++) {
+    // Node name — left justified, white
+    tft.setTextSize(2);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setCursor(5, y);
+    tft.print(nodes[i].name);
+
+    // COM port — right justified, yellow (12px/char at size 2)
+    tft.setTextColor(ILI9341_YELLOW);
+    tft.setCursor(235 - (int)strlen(nodes[i].port) * 12, y);
+    tft.print(nodes[i].port);
+
+    // MAC address — right justified on next line
+    y += 18;
+    tft.setTextColor(ILI9341_YELLOW);
+    tft.setCursor(235 - (int)strlen(nodes[i].mac) * 12, y);
+    tft.print(nodes[i].mac);
+
+    y += 20;
+    if (i < nodeCount - 1) {
+      tft.drawLine(0, y - 2, 240, y - 2, 0x4208);  // dark grey divider
+    }
+  }
+}
+
 void switchScreen(int newType) {
   screen_type = newType;
   alertActive = false;
@@ -835,6 +884,8 @@ void switchScreen(int newType) {
     drawALU();
   } else if (screen_type == 3) {
     drawMCP();
+  } else if (screen_type == 4) {
+    drawNodeRegistry();
   }
   Serial.printf("Screen -> type %d\n", screen_type);
 }

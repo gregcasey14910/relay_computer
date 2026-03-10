@@ -20,6 +20,14 @@
 #include <Adafruit_NeoPixel.h>
 #include "../common/P2P_Signals.h"
 #include "../common/mac_globals.cpp"  // MAC addresses
+#include <esp_idf_version.h>
+
+// Explicit forward declaration — suppresses Arduino auto-gen which ignores #ifdef
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
+void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len);
+#else
+void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int len);
+#endif
 
 // Which device am I?
 #define MY_DEVICE_IDX  IDX_ALU
@@ -600,31 +608,36 @@ void sendResults() {
 // RECEIVE CALLBACK
 // =====================================================================================================
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
+  const uint8_t *mac_addr = info->src_addr;
+#else
+void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int len) {
+#endif
   // Validate message size
   if (len != sizeof(P2PMessage)) {
     Serial.printf("⚠ Invalid message size: %d (expected %d)\n", len, sizeof(P2PMessage));
     return;
   }
-  
+
   P2PMessage msg;
   memcpy(&msg, data, sizeof(msg));
-  
+
   // Only process REQUEST messages
   if (msg.msg_type != MSG_REQUEST) {
     return;
   }
-  
+
   // Dynamic peer registration - add sender if not already registered
-  if (!esp_now_is_peer_exist(info->src_addr)) {
+  if (!esp_now_is_peer_exist(mac_addr)) {
     esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, info->src_addr, 6);
+    memcpy(peerInfo.peer_addr, mac_addr, 6);
     peerInfo.channel = 0;
     peerInfo.encrypt = false;
-    
+
     if (esp_now_add_peer(&peerInfo) == ESP_OK) {
       Serial.print("│ ✓ Added sender as peer dynamically: ");
-      printMAC(info->src_addr);
+      printMAC(mac_addr);
       Serial.println();
     }
   }
@@ -683,7 +696,7 @@ void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
   }
   
   // Send ACK back to Master
-  esp_err_t result = esp_now_send(info->src_addr, (uint8_t*)&response, sizeof(response));
+  esp_err_t result = esp_now_send(mac_addr, (uint8_t*)&response, sizeof(response));
   if (result == ESP_OK) {
     Serial.println("│ ✓ ACK sent to Master");
   } else {

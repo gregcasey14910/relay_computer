@@ -2,17 +2,17 @@
 
 ## ESP-NOW Node Registry
 
-| Node | Role | Chip | MAC Address | COM Port | Firmware | Status |
-|------|------|------|-------------|----------|----------|--------|
-| CYD Monitor | Sys Display | ESP32 | 30:C9:22:32:34:38 | COM5 | CYB_RELAY_COMPUTER_MONITOR | ✅ Active |
-| Master | Master | ESP32-C3 | AC:A7:04:BC:06:60 | COM28 | Master | ✅ Active |
-| Reg Node 2 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
-| Reg Node 3 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
-| Reg Node 4 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
-| Reg Node 5 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
-| Reg Node 6 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
-| Reg Node 7 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
-| Reg Node 8 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
+| Node | Role | Chip | MAC Address | MAC Array | COM Port | Firmware | Status |
+|------|------|------|-------------|-----------|----------|----------|--------|
+| CYD Monitor | Sys Display | ESP32 | 30:C9:22:32:34:38 | {0x30, 0xC9, 0x22, 0x32, 0x34, 0x38} | COM13 | CYB_RELAY_COMPUTER_MONITOR | ✅ Active |
+| Master | Master | ESP32-C3 | AC:A7:04:BC:06:60 | {0xAC, 0xA7, 0x04, 0xBC, 0x06, 0x60} | COM28 | Master | ✅ Active |
+| ALU | ALU | ESP32-S3 | 20:6E:F1:B0:DC:18 | {0x20, 0x6E, 0xF1, 0xB0, 0xDC, 0x18} | COM11 | alu | ⬜ Pending |
+| Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
+| Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
+| Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
+| Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
+| Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
+| Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
 
 > Flash each new C3, read its MAC from serial output, and fill in the table.
 
