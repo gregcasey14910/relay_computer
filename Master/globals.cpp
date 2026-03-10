@@ -26,7 +26,7 @@ int state_time = 1;
 // MODULE EMULATION FLAGS
 // =====================================================================================================
 // emulate_type bit = 1 -> emulated in MASTER; 0 -> handled by remote MAC-based unit
-uint16_t emulate_type = 0b0000011111111111; // initial test suggested by user
+uint16_t emulate_type = 0b0000001111111111; // bit 11 (em_ALU) cleared -> external ALU ESP32
 //                             ba987654321
 // remote_type bit = 1 -> ESP32 handles it (when emulate_type bit is 0); 0 -> other hardware
 uint16_t remote_type  = 0b0000010000001111;
