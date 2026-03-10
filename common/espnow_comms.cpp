@@ -107,14 +107,22 @@ void initESPNow() {
 // =====================================================================================================
 // SEND CALLBACK
 // =====================================================================================================
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
 void onDataSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
+#else
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+#endif
   // Optionally log send status for debugging
 }
 
 // =====================================================================================================
 // RECEIVE CALLBACK
 // =====================================================================================================
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
+#else
+void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int len) {
+#endif
   if (len != sizeof(P2PMessage)) {
     Serial.print("⚠ Wrong message size: ");
     Serial.print(len);

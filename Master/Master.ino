@@ -7,8 +7,6 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_MCP23X17.h>
-#include <ESP32_NOW.h>
-#include <ESP32_NOW_Serial.h>
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -26,7 +24,8 @@
 // =====================================================================================================
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(3000);  // Wait for USB serial monitor to connect
+  Serial.println("=== MASTER BOOTING ===");
 
   Wire.begin(0, 1);  // SDA = GPIO0, SCL = GPIO1
   delay(100);
@@ -50,8 +49,7 @@ void setup() {
   
   // Initialize MCP23017 at address 0x21
   if (!mcp.begin_I2C(0x21)) {
-    Serial.println("MCP23017 @ 0x21 not found!");
-    while (1);
+    Serial.println("MCP23017 @ 0x21 not found! (continuing)");
   }
   for (int i = 0; i <= 15; i++) {
     mcp.pinMode(i, OUTPUT);
@@ -59,8 +57,7 @@ void setup() {
 
   // Initialize MCP23017 at address 0x20
   if (!mcp0.begin_I2C(0x20)) {
-    Serial.println("MCP23017 @ 0x20 not found!");
-    while (1);
+    Serial.println("MCP23017 @ 0x20 not found! (continuing)");
   }
   for (int i = 0; i <= 15; i++) {
     mcp0.pinMode(i, OUTPUT);

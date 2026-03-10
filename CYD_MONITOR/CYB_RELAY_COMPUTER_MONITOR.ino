@@ -60,61 +60,11 @@ String macAddress = "";
 // Screen type selection (runtime — BTN1 cycles 1->2->3->1)
 int screen_type = 3;  // 1 = scrolling, 2 = ALU graphic, 3 = MCP23017 debug
 
-// ESP-NOW message structure
-typedef struct struct_message {
-  int cmd;
-  int bus_value;
-} struct_message;
-
-// Command enum
-enum RemoteCmd {
-  PING        = 0x0,   // Ping/heartbeat
-  SEL_REGA    = 0x1,   // Select Register A
-  SEL_REGD    = 0x2,   // Select Register D
-  SEL_AD      = 0x3,   // Select both A and D
-  CLK_REGA    = 0x11,  // Clock Register A
-  CLK_REGD    = 0x12,  // Clock Register D
-  CLK_AD      = 0x13,  // Clock both A and D
-
-  SEL_REGB    = 0x4,   // Select Register B
-  SEL_REGC    = 0x5,   // Select Register C
-  SEL_BC      = 0x6,   // Select both B and C
-  CLK_REGB    = 0x14,  // Clock Register B
-  CLK_REGC    = 0x15,  // Clock Register C
-  CLK_BC      = 0x16,  // Clock both B and C
-
-  SEL_REGM1   = 0x7,   // Select Register M1
-  SEL_REGM2   = 0x8,   // Select Register M2
-  SEL_M       = 0x9,   // Select both M1 and M2
-  CLK_REGM1   = 0x17,  // Clock Register M1
-  CLK_REGM2   = 0x18,  // Clock Register M2
-  CLK_M1M2    = 0x19,  // Clock both M1 and M2
-
-  SEL_REGX    = 0xa,   // Select Register X
-  SEL_REGY    = 0xb,   // Select Register Y
-  SEL_XY      = 0xc,   // Select both X and Y
-  CLK_REGX    = 0x1a,  // Clock Register X
-  CLK_REGY    = 0x1b,  // Clock Register Y
-  CLK_XY      = 0x1c,  // Clock both X and Y
-
-  SEL_REGJ1   = 0xd,   // Select Register J1
-  SEL_REGJ2   = 0xe,   // Select Register J2
-  SEL_J       = 0xf,   // Select both J1 and J2
-  CLK_REGJ1   = 0x1d,  // Clock Register J1
-  CLK_REGJ2   = 0x1e,  // Clock Register J2
-  CLK_J       = 0x1f,  // Clock both J1 and J2
-  
-  FCT_ALU     = 0x20,  // Function code to ALU
-  B_2_ALU     = 0x21,  // SEND BReg to ALU
-  C_2_ALU     = 0x22,  // Send CReg to ALU
-  BC_2_ALU    = 0x23,  // Send BC to ALU
-  ALU_rsv1    = 0x24,
-  ALU_COMBO   = 0x30,  // ALU output/result
-  ALU_2_DBUS  = 0x31,  // Gate ALU to DBUS
-  CLK_SR      = 0x32,  // Gate SR 
-  HCT_MS      = 0x33,  // implied codes for the 74HCT181 ALU
-  ALU_SCZ     = 0x34   // Sign, Carry, Zero status bits
-};
+// Signal definitions and P2PMessage struct - from shared common header
+#include "../common/P2P_Signals.h"
+#define MSG_REQUEST   0x01
+#define MSG_RESPONSE  0x02
+#define MSG_BROADCAST 0x03
 
 // ALU display state (for screen_type = 2)
 uint8_t alu_b_value = 0;
@@ -125,13 +75,13 @@ uint8_t hct_ms = 0;      // 74HC181 M and S control bits
 uint8_t alu_scz = 0;     // Sign, Carry, Zero status bits
 
 // Message queue (for screen_type = 1)
-const int MAX_MESSAGES = 100;
-String messageLog[MAX_MESSAGES];
+const int MAX_MESSAGES = 20;
+char messageLog[MAX_MESSAGES][32];
 int messageCount = 0;
 
 // Flag for new messages
 volatile bool newMessageFlag = false;
-String pendingMessage = "";
+char pendingMessage[32] = "";
 
 const int lineHeight = 18;
 const int displayStartY = 50;
@@ -139,58 +89,7 @@ const int displayHeight = 320 - displayStartY;
 const int maxVisibleLines = displayHeight / lineHeight;
 
 // Convert command code to name
-String getCommandName(int cmd) {
-  switch(cmd) {
-    case PING:        return "PING";
-    case SEL_REGA:    return "SEL_REGA";
-    case SEL_REGD:    return "SEL_REGD";
-    case SEL_AD:      return "SEL_AD";
-    case SEL_REGB:    return "SEL_REGB";
-    case SEL_REGC:    return "SEL_REGC";
-    case SEL_BC:      return "SEL_BC";
-    case SEL_REGM1:   return "SEL_M1";
-    case SEL_REGM2:   return "SEL_M2";
-    case SEL_M:       return "SEL_M";
-    case SEL_REGX:    return "SEL_X";
-    case SEL_REGY:    return "SEL_Y";
-    case SEL_XY:      return "SEL_XY";
-    case SEL_REGJ1:   return "SEL_J1";
-    case SEL_REGJ2:   return "SEL_J2";
-    case SEL_J:       return "SEL_J";
-    
-    case CLK_REGA:    return "CLK_REGA";
-    case CLK_REGD:    return "CLK_REGD";
-    case CLK_AD:      return "CLK_AD";
-    case CLK_REGB:    return "CLK_REGB";
-    case CLK_REGC:    return "CLK_REGC";
-    case CLK_BC:      return "CLK_BC";
-    case CLK_REGM1:   return "CLK_M1";
-    case CLK_REGM2:   return "CLK_M2";
-    case CLK_M1M2:    return "CLK_M";
-    case CLK_REGX:    return "CLK_X";
-    case CLK_REGY:    return "CLK_Y";
-    case CLK_XY:      return "CLK_XY";
-    case CLK_REGJ1:   return "CLK_J1";
-    case CLK_REGJ2:   return "CLK_J2";
-    case CLK_J:       return "CLK_J";
-    
-    case FCT_ALU:     return "F__ALU";
-    case B_2_ALU:     return "B->ALU";
-    case C_2_ALU:     return "C->ALU";
-    case BC_2_ALU:    return "BC->ALU";
-    case ALU_rsv1:    return "ALU_r1";
-    case ALU_COMBO:   return "ALU_OUT";
-    case ALU_2_DBUS:  return "ALU->DB";
-    case CLK_SR:      return "CLK_SR";
-    case HCT_MS:      return "HCT_MS";
-    case ALU_SCZ:     return "ALU_SCZ";
-    
-    default:
-      char hexbuf[8];
-      sprintf(hexbuf, "?%02X", cmd);
-      return String(hexbuf);
-  }
-}
+// getSignalName() is provided by ../common/P2P_Signals.h
 
 void setup() {
   Serial.begin(115200);
@@ -295,7 +194,8 @@ void setup() {
 void loop() {
   // Check for new message
   if (newMessageFlag) {
-    String msg = pendingMessage;
+    char msg[32];
+    strncpy(msg, pendingMessage, sizeof(msg));
     newMessageFlag = false;
     
     // Flash RANDOM color on RGB LED
@@ -312,29 +212,27 @@ void loop() {
     if (screen_type == 1) {
       // Add to log for scrolling display
       if (messageCount < MAX_MESSAGES) {
-        messageLog[messageCount] = msg;
+        strncpy(messageLog[messageCount], msg, 32);
         messageCount++;
       } else {
-        // Shift up in buffer
         for (int i = 0; i < MAX_MESSAGES - 1; i++) {
-          messageLog[i] = messageLog[i + 1];
+          strncpy(messageLog[i], messageLog[i + 1], 32);
         }
-        messageLog[MAX_MESSAGES - 1] = msg;
+        strncpy(messageLog[MAX_MESSAGES - 1], msg, 32);
       }
-      
-      Serial.print("RX: ");
-      Serial.println(msg);
-      
-      // Redraw display
-      redrawDisplay();
-    } else if (screen_type == 2) {
-      // ALU display mode - just redraw
-      Serial.print("RX: ");
-      Serial.println(msg);
-      drawALU();
+      // Don't redraw here — throttled redraw below handles it
     }
+    // screen_type 2: state updated in callback, throttled redraw below
   }
   
+  // Throttled display redraw for screen types 1 and 2 (max 5fps)
+  static unsigned long lastDisplayUpdate = 0;
+  if ((screen_type == 1 || screen_type == 2) && millis() - lastDisplayUpdate >= 200) {
+    lastDisplayUpdate = millis();
+    if (screen_type == 1) redrawDisplay();
+    else if (screen_type == 2) drawALU();
+  }
+
   // Serial command handler (screen_type=3)
   static String serialBuf = "";
   while (screen_type == 3 && Serial.available()) {
@@ -510,53 +408,50 @@ void drawUptime() {
 
 // ESP-NOW callback
 void onDataReceive(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
-  // Parse struct
-  struct_message receivedData;
+  if (len != sizeof(P2PMessage)) return;
+
+  P2PMessage receivedData;
   memcpy(&receivedData, incomingData, sizeof(receivedData));
-  
+
+  // Only process broadcast messages from Master
+  if (receivedData.msg_type != MSG_BROADCAST) return;
+
   if (screen_type == 1) {
-    // Scrolling mode - format as text
-    String cmdName = getCommandName(receivedData.cmd);
-    char buffer[40];
-    sprintf(buffer, "%-9s:0x%02X", cmdName.c_str(), receivedData.bus_value);
-    pendingMessage = String(buffer);
+    // Scrolling mode - format as text (no heap allocation)
+    snprintf(pendingMessage, sizeof(pendingMessage), "%-9s:0x%02X",
+             getSignalName(receivedData.signal), receivedData.value);
   } else if (screen_type == 2) {
-    // ALU graphic mode - update state
-    if (receivedData.cmd == FCT_ALU) {
-      alu_f_code = receivedData.bus_value & 0x07;  // Lower 3 bits
-    } else if (receivedData.cmd == B_2_ALU) {
-      alu_b_value = receivedData.bus_value;
-    } else if (receivedData.cmd == C_2_ALU) {
-      alu_c_value = receivedData.bus_value;
-    } else if (receivedData.cmd == ALU_COMBO) {
-      alu_output = receivedData.bus_value;  // ALU result
-    } else if (receivedData.cmd == HCT_MS) {
-      hct_ms = receivedData.bus_value;  // Store M and S bits
-    } else if (receivedData.cmd == ALU_SCZ) {
-      alu_scz = receivedData.bus_value;  // Store SCZ status bits
-    }
-    pendingMessage = "ALU_UPDATE";
+    // ALU graphic mode - update state variables only
+    if (receivedData.signal == FCT_ALU)      alu_f_code = receivedData.value & 0x07;
+    else if (receivedData.signal == B_2_ALU) alu_b_value = receivedData.value;
+    else if (receivedData.signal == C_2_ALU) alu_c_value = receivedData.value;
+    else if (receivedData.signal == ALU_OUT)   alu_output = receivedData.value;
+    else if (receivedData.signal == HCT_MS)  hct_ms = receivedData.value;
+    else if (receivedData.signal == ALU_SCZ) alu_scz = receivedData.value;
+  } else {
+    return;  // screen_type 3: no flag needed
   }
-  
+
   newMessageFlag = true;
 }
 
 void redrawDisplay() {
   // Clear message area
   tft.fillRect(0, displayStartY, 240, displayHeight, ILI9341_BLACK);
-  
+
   // Figure out which messages to display (last N messages)
   int numToShow = min(messageCount, maxVisibleLines);
   int startIdx = messageCount - numToShow;
-  
+
   // Draw messages from top to bottom
   tft.setTextSize(2);
   tft.setTextColor(ILI9341_YELLOW);
-  
+  tft.setTextWrap(false);  // Prevent last char wrapping back to col 0
+
   for (int i = 0; i < numToShow; i++) {
     int msgIdx = startIdx + i;
     int yPos = displayStartY + (i * lineHeight);
-    
+
     tft.setCursor(5, yPos);
     tft.print(messageLog[msgIdx]);
   }

@@ -4,8 +4,8 @@
 
 | Node | Role | Chip | MAC Address | COM Port | Firmware | Status |
 |------|------|------|-------------|----------|----------|--------|
-| CYD Monitor | Master / Display | ESP32 | 30:C9:22:32:34:38 | COM5 | CYB_RELAY_COMPUTER_MONITOR | ✅ Active |
-| Reg Node 1 | Register slave | ESP32-C3 | AC:A7:04:BC:06:60 | COM28 | RC_REG_ESP32C3 | ✅ Active |
+| CYD Monitor | Sys Display | ESP32 | 30:C9:22:32:34:38 | COM5 | CYB_RELAY_COMPUTER_MONITOR | ✅ Active |
+| Master | Master | ESP32-C3 | AC:A7:04:BC:06:60 | COM28 | Master | ✅ Active |
 | Reg Node 2 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
 | Reg Node 3 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |
 | Reg Node 4 | TBD | ESP32-C3 | TBD | TBD | TBD | ⬜ Pending |

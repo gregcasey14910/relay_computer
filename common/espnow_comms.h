@@ -26,8 +26,14 @@ void sendBroadcast(uint8_t signal, uint8_t value);
 // Legacy broadcast function - 16-bit version (NEW)
 void sendBroadcast(uint8_t signal, uint16_t value16);
 
-// Callbacks
+// Callbacks (ESP-IDF 5.1+ uses newer signature types; older SDK uses mac_addr)
+#include <esp_idf_version.h>
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 1, 0)
 void onDataSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status);
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len);
+#else
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
+void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len);
+#endif
 
 #endif // ESPNOW_COMMS_H
