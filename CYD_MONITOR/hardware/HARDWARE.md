@@ -6,8 +6,8 @@
 |------|------|------|-------------|-----------|----------|----------|--------|
 | CYD Monitor | Sys Display | ESP32 | 30:C9:22:32:34:38 | {0x30, 0xC9, 0x22, 0x32, 0x34, 0x38} | COM13 | CYB_RELAY_COMPUTER_MONITOR | ✅ Active |
 | Master | Master | ESP32-C3 | AC:A7:04:BC:06:60 | {0xAC, 0xA7, 0x04, 0xBC, 0x06, 0x60} | COM28 | Master | ✅ Active |
-| ALU | ALU | ESP32-S3 | 20:6E:F1:B0:DC:18 | {0x20, 0x6E, 0xF1, 0xB0, 0xDC, 0x18} | COM11 | alu | ⬜ Pending |
-| Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
+| ALU | ALU | ESP32-S3 | 20:6E:F1:B0:DC:18 | {0x20, 0x6E, 0xF1, 0xB0, 0xDC, 0x18} | COM11 | alu | ✅ Active |
+| Reg_A | Register A | ESP32-C3 | 88:56:A6:78:7B:3C | {0x88, 0x56, 0xA6, 0x78, 0x7B, 0x3C} | COM4 | Reg_A | ✅ Active |
 | Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
 | Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
 | Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |

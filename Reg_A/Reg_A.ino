@@ -252,7 +252,7 @@ void handleLoad(P2PMessage *request, const uint8_t *sender_mac) {
 // =====================================================================================================
 // ESP-NOW: Data Received Callback
 // =====================================================================================================
-void onDataRecv(const esp_now_recv_info *recv_info, const uint8_t *data, int len) {
+void onDataRecv(const uint8_t *sender_mac, const uint8_t *data, int len) {
   if (len != sizeof(P2PMessage)) {
     Serial.print("✗ Invalid message size: ");
     Serial.print(len);
@@ -261,24 +261,24 @@ void onDataRecv(const esp_now_recv_info *recv_info, const uint8_t *data, int len
     Serial.println(")");
     return;
   }
-  
+
   P2PMessage *msg = (P2PMessage *)data;
-  
+
   // Ignore broadcasts (type=3) - these are for CYD Monitor only
   if (msg->msg_type == MSG_BROADCAST) {
     return;  // Silent ignore
   }
-  
+
   // Only respond to messages addressed to us
   if (msg->dst_idx != 0xFF && msg->dst_idx != MY_DEVICE_IDX) {
     return;  // Not for us, ignore
   }
-  
+
   // Identify signal for debug
   const char* signal_name = "UNKNOWN";
   if (msg->signal == MY_SELECT_SIGNAL) signal_name = "SELECT";
   else if (msg->signal == MY_LOAD_SIGNAL) signal_name = "LOAD";
-  
+
   Serial.print("Received: type=");
   Serial.print(msg->msg_type);
   Serial.print(", signal=");
@@ -289,19 +289,18 @@ void onDataRecv(const esp_now_recv_info *recv_info, const uint8_t *data, int len
   Serial.print(msg->value, HEX);
   Serial.print(", seq=");
   Serial.println(msg->seq_num);
-  
-  // Handle the request - pass sender's MAC address
+
+  // Handle the request
   switch (msg->signal) {
     case MY_SELECT_SIGNAL:
-      handleSelect(msg, recv_info->src_addr);
+      handleSelect(msg, sender_mac);
       break;
-      
+
     case MY_LOAD_SIGNAL:
-      handleLoad(msg, recv_info->src_addr);
+      handleLoad(msg, sender_mac);
       break;
-      
+
     default:
-      // Ignore other signals (not for this register)
       break;
   }
 }
@@ -309,8 +308,7 @@ void onDataRecv(const esp_now_recv_info *recv_info, const uint8_t *data, int len
 // =====================================================================================================
 // ESP-NOW: Data Sent Callback
 // =====================================================================================================
-void onDataSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
-  // Now showing send status for debugging
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   if (status != ESP_NOW_SEND_SUCCESS) {
     Serial.println("✗ Response send failed in callback");
   }
