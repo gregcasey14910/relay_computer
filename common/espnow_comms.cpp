@@ -67,6 +67,18 @@ void initESPNow() {
   }
 
 
+  // Register Reg_D (peer-to-peer)
+  esp_now_peer_info_t regD_peer;
+  memset(&regD_peer, 0, sizeof(regD_peer));
+  memcpy(regD_peer.peer_addr, regD_MAC, 6);
+  regD_peer.channel = 0;
+  regD_peer.encrypt = false;
+  if (esp_now_add_peer(&regD_peer) == ESP_OK) {
+    Serial.print("✓ Reg_D registered: ");
+    printMAC(regD_MAC);
+    Serial.println();
+  }
+
   // Register ALU (peer-to-peer)
   esp_now_peer_info_t alu_peer;
   memset(&alu_peer, 0, sizeof(alu_peer));
