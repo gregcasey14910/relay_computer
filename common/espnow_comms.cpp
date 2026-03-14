@@ -53,8 +53,7 @@ void initESPNow() {
     Serial.println();
   }
   
-  // Register Reg_C (peer-to-peer) - Same MAC as Reg_B (same physical module)
-  // Note: regC_MAC points to same address as regB_MAC, but we register both indices
+  // Register Reg_C (peer-to-peer)
   esp_now_peer_info_t regC_peer;
   memset(&regC_peer, 0, sizeof(regC_peer));
   memcpy(regC_peer.peer_addr, regC_MAC, 6);

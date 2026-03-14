@@ -1,6 +1,6 @@
 /*******************************************************************************
  * GENERIC REGISTER MODULE - Configurable for A, B, C, or D
- * 
+ *
  * CONFIGURATION: Set which register this module implements
  * Change the #define below to create Reg_A, Reg_B, Reg_C, or Reg_D
  ******************************************************************************/
@@ -8,7 +8,7 @@
 // =====================================================================================================
 // CONFIGURATION - CHANGE THIS TO SELECT WHICH REGISTER
 // =====================================================================================================
-#define MY_REGISTER 'A'    // Valid values: 'A', 'B', 'C', 'D'
+#define MY_REGISTER 'C'    // Valid values: 'A', 'B', 'C', 'D'
 
 // =====================================================================================================
 // AUTO-CONFIGURATION - Do not modify below this line
@@ -41,18 +41,18 @@
  * Working version with SSD1306 display
  * Uses ESPNOW_Common.h for centralized MAC address management
  * Updated for P2P ACK scheme with dynamic peer registration
- * 
+ *
  * Hardware:
  *   ESP32-C3-SuperMini
  *   SSD1306 OLED Display (128x64, I2C address 0x3C)
  *     - SDA: GPIO0
  *     - SCL: GPIO1
- * 
+ *
  * Display Format:
  *   REG X           [--]   (header + control indicator)
  *    0x42                  (BIG register value)
  *   DBUS: 0x42             (data bus value)
- * 
+ *
  * Date: February 7, 2026
  ******************************************************************************/
 
@@ -97,43 +97,38 @@ unsigned long load_count = 0;
 void updateDisplay() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
-  
-  // Line 1: Header + control indicator (small font)
+
   display.setTextSize(1);
   display.setCursor(0, 0);
   display.print("REG ");
-  display.print(MY_REG_NAME);  // Uses configured register name
-  
-  // Control line indicator on same line, far right
+  display.print(MY_REG_NAME);
+
   display.setCursor(104, 0);
-  
-  // Check which controls are active (within 500ms)
+
   bool select_active = (millis() - select_time) < CONTROL_DISPLAY_MS;
   bool load_active = (millis() - load_time) < CONTROL_DISPLAY_MS;
-  
+
   if (select_active && load_active) {
-    display.print("[R2]");  // BOTH active
+    display.print("[R2]");
   } else if (select_active) {
-    display.print("[RS]");  // Only SELECT active
+    display.print("[RS]");
   } else if (load_active) {
-    display.print("[RL]");  // Only LOAD active
+    display.print("[RL]");
   } else {
-    display.print("[--]");  // Neither active
+    display.print("[--]");
   }
-  
-  // Line 2: Big register value
+
   display.setTextSize(4);
   display.setCursor(0, 18);
-  
+
   if (!reg_initialized) {
-    display.print(" 0xXX");  // Not initialized yet
+    display.print(" 0xXX");
   } else {
     display.print(" 0x");
-    if (registerValue < 0x10) display.print("0");  // Leading zero
+    if (registerValue < 0x10) display.print("0");
     display.print(registerValue, HEX);
   }
-  
-  // Line 3: DBUS value (bottom)
+
   display.setTextSize(1);
   display.setCursor(0, 56);
   display.print("DBUS: ");
@@ -144,7 +139,7 @@ void updateDisplay() {
     if (last_dbus < 0x10) display.print("0");
     display.print(last_dbus, HEX);
   }
-  
+
   display.display();
 }
 
@@ -156,39 +151,34 @@ void handleSelect(P2PMessage *request, const uint8_t *sender_mac) {
   Serial.print(MY_REG_NAME);
   Serial.println(" - Outputting register to DBUS");
   last_dbus = registerValue;
-  select_time = millis();  // Mark when SELECT occurred
+  select_time = millis();
   select_count++;
   display_dirty = true;
-  
-  // Check if sender is registered as peer, add if not
+
   if (!esp_now_is_peer_exist(sender_mac)) {
     esp_now_peer_info_t peerInfo = {};
     memcpy(peerInfo.peer_addr, sender_mac, 6);
     peerInfo.channel = 0;
     peerInfo.encrypt = false;
-    
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
       Serial.println("  ✗ Failed to add sender as peer");
       return;
     }
     Serial.println("  ✓ Added sender as peer dynamically");
   }
-  
-  // Send response directly back to sender
+
   P2PMessage response;
   response.msg_type = MSG_RESPONSE;
   response.seq_num = request->seq_num;
-  response.signal = MY_SELECT_SIGNAL;  // Echo back the SELECT signal (RSA/RSB/RSC/RSD)
+  response.signal = MY_SELECT_SIGNAL;
   response.value = registerValue;
   response.data16 = 0;
   response.src_idx = MY_DEVICE_IDX;
-  response.dst_idx = request->src_idx;  // Reply to sender
-  
-  // Send directly to sender's MAC address
+  response.dst_idx = request->src_idx;
+
   esp_err_t result = esp_now_send(sender_mac, (uint8_t *) &response, sizeof(response));
-  
   if (result == ESP_OK) {
-    Serial.print("  → Response sent to sender, value=0x");
+    Serial.print("  → Response sent, value=0x");
     Serial.println(registerValue, HEX);
   } else {
     Serial.print("  ✗ Response send failed: ");
@@ -202,47 +192,40 @@ void handleSelect(P2PMessage *request, const uint8_t *sender_mac) {
 void handleLoad(P2PMessage *request, const uint8_t *sender_mac) {
   Serial.print("*** RL");
   Serial.print(MY_REG_NAME);
-  Serial.print(" - Loading value into ");
-  Serial.print(MY_REG_NAME);
-  Serial.print(": 0x");
+  Serial.print(" - Loading: 0x");
   Serial.println(request->value, HEX);
-  
+
   registerValue = request->value;
   last_dbus = request->value;
-  reg_initialized = true;  // Mark as initialized on first load
-  load_time = millis();    // Mark when LOAD occurred
+  reg_initialized = true;
+  load_time = millis();
   load_count++;
   display_dirty = true;
-  
-  // Check if sender is registered as peer, add if not
+
   if (!esp_now_is_peer_exist(sender_mac)) {
     esp_now_peer_info_t peerInfo = {};
     memcpy(peerInfo.peer_addr, sender_mac, 6);
     peerInfo.channel = 0;
     peerInfo.encrypt = false;
-    
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
       Serial.println("  ✗ Failed to add sender as peer");
       return;
     }
     Serial.println("  ✓ Added sender as peer dynamically");
   }
-  
-  // Send response directly back to sender
+
   P2PMessage response;
   response.msg_type = MSG_RESPONSE;
   response.seq_num = request->seq_num;
-  response.signal = MY_LOAD_SIGNAL;  // Echo back the LOAD signal (RLA/RLB/RLC/RLD)
+  response.signal = MY_LOAD_SIGNAL;
   response.value = registerValue;
   response.data16 = 0;
   response.src_idx = MY_DEVICE_IDX;
-  response.dst_idx = request->src_idx;  // Reply to sender
-  
-  // Send directly to sender's MAC address
+  response.dst_idx = request->src_idx;
+
   esp_err_t result = esp_now_send(sender_mac, (uint8_t *) &response, sizeof(response));
-  
   if (result == ESP_OK) {
-    Serial.print("  → Response sent to sender, value=0x");
+    Serial.print("  → Response sent, value=0x");
     Serial.println(registerValue, HEX);
   } else {
     Serial.print("  ✗ Response send failed: ");
@@ -254,55 +237,26 @@ void handleLoad(P2PMessage *request, const uint8_t *sender_mac) {
 // ESP-NOW: Data Received Callback
 // =====================================================================================================
 void onDataRecv(const uint8_t *sender_mac, const uint8_t *data, int len) {
-  if (len != sizeof(P2PMessage)) {
-    Serial.print("✗ Invalid message size: ");
-    Serial.print(len);
-    Serial.print(" bytes (expected ");
-    Serial.print(sizeof(P2PMessage));
-    Serial.println(")");
-    return;
-  }
+  if (len != sizeof(P2PMessage)) return;
 
   P2PMessage *msg = (P2PMessage *)data;
 
-  // Ignore broadcasts (type=3) - these are for CYD Monitor only
-  if (msg->msg_type == MSG_BROADCAST) {
-    return;  // Silent ignore
-  }
+  if (msg->msg_type == MSG_BROADCAST) return;
+  if (msg->dst_idx != 0xFF && msg->dst_idx != MY_DEVICE_IDX) return;
 
-  // Only respond to messages addressed to us
-  if (msg->dst_idx != 0xFF && msg->dst_idx != MY_DEVICE_IDX) {
-    return;  // Not for us, ignore
-  }
-
-  // Identify signal for debug
   const char* signal_name = "UNKNOWN";
   if (msg->signal == MY_SELECT_SIGNAL) signal_name = "SELECT";
   else if (msg->signal == MY_LOAD_SIGNAL) signal_name = "LOAD";
 
-  Serial.print("Received: type=");
-  Serial.print(msg->msg_type);
-  Serial.print(", signal=");
+  Serial.print("Received: signal=");
   Serial.print(signal_name);
-  Serial.print("(0x");
-  Serial.print(msg->signal, HEX);
-  Serial.print("), value=0x");
-  Serial.print(msg->value, HEX);
-  Serial.print(", seq=");
-  Serial.println(msg->seq_num);
+  Serial.print(", value=0x");
+  Serial.println(msg->value, HEX);
 
-  // Handle the request
   switch (msg->signal) {
-    case MY_SELECT_SIGNAL:
-      handleSelect(msg, sender_mac);
-      break;
-
-    case MY_LOAD_SIGNAL:
-      handleLoad(msg, sender_mac);
-      break;
-
-    default:
-      break;
+    case MY_SELECT_SIGNAL: handleSelect(msg, sender_mac); break;
+    case MY_LOAD_SIGNAL:   handleLoad(msg, sender_mac);   break;
+    default: break;
   }
 }
 
@@ -321,64 +275,55 @@ void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  
+
   Serial.println("\n========================================");
   Serial.print("REG_");
   Serial.print(MY_REG_NAME);
   Serial.println(" INITIALIZATION");
   Serial.println("========================================");
-  
-  // Initialize I2C for display
-  Wire.begin(0, 1);  // SDA=GPIO0, SCL=GPIO1
+
+  Wire.begin(0, 1);
   delay(100);
-  
-  // Initialize display
+
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println("✗ SSD1306 allocation failed");
-    while(1);  // Halt if display fails
+    while(1);
   }
   Serial.println("✓ SSD1306 display initialized");
-  
-  // Show initial display
   updateDisplay();
-  
-  // Initialize WiFi for ESP-NOW
+
   WiFi.mode(WIFI_STA);
   delay(100);
-  
+
   Serial.println("\n========== NETWORK SETUP ==========");
   Serial.print("MAC Address: ");
   Serial.println(WiFi.macAddress());
   Serial.println("===================================\n");
-  
-  // Initialize ESP-NOW
+
   if (esp_now_init() != ESP_OK) {
     Serial.println("✗ ESP-NOW init failed");
     return;
   }
   Serial.println("✓ ESP-NOW initialized");
-  
-  // Register Master as peer so we can send responses back
+
   esp_now_peer_info_t peerInfo = {};
-  memcpy(peerInfo.peer_addr, device_MACs[IDX_MASTER], 6);  // Get Master MAC from common header
+  memcpy(peerInfo.peer_addr, device_MACs[IDX_MASTER], 6);
   peerInfo.channel = 0;
   peerInfo.encrypt = false;
-  
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
     Serial.println("✗ Failed to add Master as peer");
   } else {
-    Serial.print("✓ Master registered as peer: ");
+    Serial.print("✓ Master registered: ");
     for (int i = 0; i < 6; i++) {
       Serial.printf("%02X", device_MACs[IDX_MASTER][i]);
       if (i < 5) Serial.print(":");
     }
     Serial.println();
   }
-  
-  // Register callbacks
+
   esp_now_register_recv_cb(onDataRecv);
   esp_now_register_send_cb(onDataSent);
-  
+
   Serial.print("✓ Reg_");
   Serial.print(MY_REG_NAME);
   Serial.println(" ready");

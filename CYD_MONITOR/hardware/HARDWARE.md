@@ -8,7 +8,8 @@
 | Master | Master | ESP32-C3 | AC:A7:04:BC:06:60 | {0xAC, 0xA7, 0x04, 0xBC, 0x06, 0x60} | COM28 | Master | ✅ Active |
 | ALU | ALU | ESP32-S3 | 20:6E:F1:B0:DC:18 | {0x20, 0x6E, 0xF1, 0xB0, 0xDC, 0x18} | COM11 | alu | ✅ Active |
 | Reg_A | Register A | ESP32-C3 | 88:56:A6:78:7B:3C | {0x88, 0x56, 0xA6, 0x78, 0x7B, 0x3C} | COM4 | Reg_A | ✅ Active |
-| Reg_D | Register D | ESP32-C3 | AC:A7:04:BE:81:98 | {0xAC, 0xA7, 0x04, 0xBE, 0x81, 0x98} | COM29 | Reg_D | ✅ Active |
+| Reg_C | Register C | ESP32-C3 | AC:A7:04:BE:81:98 | {0xAC, 0xA7, 0x04, 0xBE, 0x81, 0x98} | COM29 | Reg_C | ✅ Active |
+| Reg_D | Register D | ESP32-C3 | DC:06:75:69:66:0C | {0xDC, 0x06, 0x75, 0x69, 0x66, 0x0C} | COM21 | Reg_D | ✅ Active |
 | Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
 | Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |
 | Reg Node | TBD | ESP32-C3 | TBD | TBD | TBD | TBD | ⬜ Pending |

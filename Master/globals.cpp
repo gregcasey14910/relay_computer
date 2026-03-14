@@ -26,8 +26,10 @@ int state_time = 1;
 // MODULE EMULATION FLAGS
 // =====================================================================================================
 // emulate_type bit = 1 -> emulated in MASTER; 0 -> handled by remote MAC-based unit
-uint16_t emulate_type = 0b0000001111110110; // bit 0 (em_AReg-1) cleared -> external Reg_A ESP32
-//                             ba987654321  // bit 3 (em_DReg-1) cleared -> external Reg_D ESP32
+uint16_t emulate_type = 0b0000001111110000; // bit 0 (em_AReg-1) cleared -> external Reg_A ESP32
+//                             ba987654321  // bit 1 (em_BReg-1) cleared -> external Reg_B ESP32
+//                                          // bit 2 (em_CReg-1) cleared -> external Reg_C ESP32
+//                                          // bit 3 (em_DReg-1) cleared -> external Reg_D ESP32
 //                                          // bit 10 (em_ALU-1) cleared -> external ALU ESP32
 // remote_type bit = 1 -> ESP32 handles it (when emulate_type bit is 0); 0 -> other hardware
 uint16_t remote_type  = 0b0000010000001111;

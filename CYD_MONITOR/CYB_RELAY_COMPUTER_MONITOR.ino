@@ -65,10 +65,16 @@ int screen_type = 3;  // 1 = scrolling, 2 = ALU graphic, 3 = MCP23017 debug, 4 =
 struct NodeInfo { const char *name; const char *port; const char *mac; };
 static const NodeInfo nodes[] = {
   { "Master",  "COM28", "AC:A7:04:BC:06:60" },
-  { "CYD Mon", "COM13", "30:C9:22:32:34:38" },
+  { "Reg_A",   "COM4",  "88:56:A6:78:7B:3C" },
+  { "Reg_B",   "COM30", "AC:A7:04:BD:46:D4" },
+  { "Reg_C",   "COM29", "AC:A7:04:BE:81:98" },
+  { "Reg_D",   "COM21", "DC:06:75:69:66:0C" },
   { "ALU",     "COM11", "20:6E:F1:B0:DC:18" },
+  { "CYD Mon", "COM25", "30:C9:22:32:34:38" },
 };
-static const int nodeCount = 3;
+static const int nodeCount = 7;
+static const int nodesPerPage = 6;   // max entries visible at once
+static int nodeScrollOffset = 0;     // first visible entry index
 
 // Signal definitions and P2PMessage struct - from shared common header
 #include "../common/P2P_Signals.h"
@@ -337,9 +343,23 @@ void loop() {
           if (btnPressCnt[i] == 2) {  // fire on 2nd consecutive press reading
             Serial.printf("BTN%d pressed\n", i + 1);
             if (i == 0) {
-              // BTN1: cycle screen type 1->2->3->1
+              // BTN1: cycle screen type 1->2->3->4->1
               int nextType = (screen_type % 4) + 1;
               switchScreen(nextType);
+            } else if (screen_type == 4 && i == 7) {
+              // BTN8: scroll back (circular)
+              mcpWriteReg(MCP_OLATA, 0x00);  // all LEDs off
+              nodeScrollOffset = (nodeScrollOffset - 1 + nodeCount) % nodeCount;
+              drawNodeRegistry();
+              mcp_led_state |= (1 << 4) | (1 << 0);  // restore LED4+LED8
+              mcpWriteReg(MCP_OLATA, mcp_led_state);
+            } else if (screen_type == 4 && i == 3) {
+              // BTN4: scroll forward (circular)
+              mcpWriteReg(MCP_OLATA, 0x00);  // all LEDs off
+              nodeScrollOffset = (nodeScrollOffset + 1) % nodeCount;
+              drawNodeRegistry();
+              mcp_led_state |= (1 << 4) | (1 << 0);  // restore LED4+LED8
+              mcpWriteReg(MCP_OLATA, mcp_led_state);
             } else if (screen_type == 3) {
               // Other buttons: toggle LED + alert (only in MCP screen)
               mcp_led_state ^= (1 << (7 - i));
@@ -835,46 +855,58 @@ void drawStardate() {
 void drawNodeRegistry() {
   tft.fillRect(0, displayStartY, 240, displayHeight, ILI9341_BLACK);
 
-  // Subtitle
+  // Subtitle + scroll indicator
   tft.setTextSize(2);
   tft.setTextColor(ILI9341_CYAN);
   tft.setCursor(24, displayStartY + 2);
   tft.print("Coms and MAC");
 
+  // Scroll indicator: "n/N" top right
+  char scrollBuf[8];
+  snprintf(scrollBuf, sizeof(scrollBuf), "%d/%d", nodeScrollOffset + 1, nodeCount);
+  tft.setTextColor(ILI9341_GREEN);
+  tft.setCursor(235 - (int)strlen(scrollBuf) * 12, displayStartY + 2);
+  tft.print(scrollBuf);
+
   tft.drawLine(0, displayStartY + 20, 240, displayStartY + 20, ILI9341_WHITE);
 
   int y = displayStartY + 26;
-  for (int i = 0; i < nodeCount; i++) {
-    // Node name — left justified, white
+  for (int j = 0; j < nodesPerPage; j++) {
+    int i = (nodeScrollOffset + j) % nodeCount;  // circular wrap
     tft.setTextSize(2);
     tft.setTextColor(ILI9341_WHITE);
     tft.setCursor(5, y);
     tft.print(nodes[i].name);
 
-    // COM port — right justified, yellow (12px/char at size 2)
     tft.setTextColor(ILI9341_YELLOW);
     tft.setCursor(235 - (int)strlen(nodes[i].port) * 12, y);
     tft.print(nodes[i].port);
 
-    // MAC address — right justified on next line
     y += 18;
     tft.setTextColor(ILI9341_YELLOW);
     tft.setCursor(235 - (int)strlen(nodes[i].mac) * 12, y);
     tft.print(nodes[i].mac);
 
     y += 20;
-    if (i < nodeCount - 1) {
-      tft.drawLine(0, y - 2, 240, y - 2, 0x4208);  // dark grey divider
+    if (j < nodesPerPage - 1) {
+      tft.drawLine(0, y - 2, 240, y - 2, 0x4208);
     }
   }
 }
 
 void switchScreen(int newType) {
+  // Turn off LED4+LED8 when leaving screen 4
+  if (screen_type == 4 && newType != 4 && mcp_found) {
+    mcp_led_state &= ~((1 << 4) | (1 << 0));  // clear LED4=bit4, LED8=bit0
+    mcpWriteReg(MCP_OLATA, mcp_led_state);
+  }
+
   screen_type = newType;
   alertActive = false;
   tft.fillScreen(ILI9341_BLACK);
   drawHeader();
   drawMacBanner();
+
   if (screen_type == 1) {
     tft.setTextSize(2);
     tft.setTextColor(ILI9341_GREEN);
@@ -885,6 +917,12 @@ void switchScreen(int newType) {
   } else if (screen_type == 3) {
     drawMCP();
   } else if (screen_type == 4) {
+    nodeScrollOffset = 0;
+    // Turn on LED4+LED8 as scroll indicators
+    if (mcp_found) {
+      mcp_led_state |= (1 << 4) | (1 << 0);   // LED4=bit4, LED8=bit0
+      mcpWriteReg(MCP_OLATA, mcp_led_state);
+    }
     drawNodeRegistry();
   }
   Serial.printf("Screen -> type %d\n", screen_type);
