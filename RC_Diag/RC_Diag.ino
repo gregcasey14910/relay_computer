@@ -1,5 +1,4 @@
 // Relay Computer Test Suite
-// Test 2: U2 Loopback Test - D_DBUS0 (GPB0) to W_DBUS0 (GPA7)
 // Uses GPIO0 (SDA) and GPIO1 (SCL) for I2C
 
 #include <Wire.h>
@@ -51,9 +50,7 @@ void runTest0_LEDCount() {
       mcp_U7.digitalWrite(14, (i >> 8) & 1);
       mcp_U7.digitalWrite(1,  (i >> 9) & 1);
     }
-    Serial.print("Count: ");
-    Serial.println(i);
-    delay(40);
+    delay(1);
   }
   for (int b = 0; b < 6; b++) digitalWrite(LED_PINS[b], LOW);
   if (u7_ok) {
@@ -79,14 +76,16 @@ void setup() {
   Wire.setClock(50000);  // 50 kHz for reliability
   Wire.setTimeOut(5000);
 
-  runTest0_LEDCount();
-
   Serial.println("\n=== Relay Computer Test Suite ===");
   Serial.println("Enter test number to run:");
   Serial.println("0 - LED Count Test (GPIO5 LSB)");
   Serial.println("1 - I2C Full Scan");
-  Serial.println("2 - U2 Loopback Test (GPB0 -> GPA7)");
-  Serial.println("3 - SSD1306 OLED Test");
+  Serial.println("2 - U3 ABUS_L[7:0]  Loopback + SSD1306 (0-255)");
+  Serial.println("3 - U4 ABUS_H[15:8] Loopback + SSD1306 (0-255)");
+  Serial.println("4 - U2 DBUS[7:0]       Loopback + SSD1306 (0-255)");
+  Serial.println("5 - U7 Misc_Ctrl[5:0]  Loopback + SSD1306 (0-63)");
+  Serial.println("6 - SSD1306 OLED Test");
+  Serial.println("7 - Run All Tests (loop, any key to stop)");
   Serial.println("================================\n");
 }
 
@@ -94,7 +93,7 @@ void loop() {
   if (Serial.available()) {
     char input = Serial.read();
     Serial.println(input);  // Echo it back
-    
+
     if (input == '0') {
       runTest0_LEDCount();
     }
@@ -102,17 +101,29 @@ void loop() {
       runTest1_ESP32Communication();
     }
     else if (input == '2') {
-      runTest2_ImmediateLoopback();
+      runTest2_ABUSLoopback();
     }
     else if (input == '3') {
-      runTest3_SSD1306();
+      runTest3_ABUSHLoopback();
+    }
+    else if (input == '4') {
+      runTest4_DBUSLoopback();
+    }
+    else if (input == '5') {
+      runTest5_MiscCtrlLoopback();
+    }
+    else if (input == '6') {
+      runTest6_SSD1306();
+    }
+    else if (input == '7') {
+      runTest7_AllTests();
     }
 
     // Clear any remaining characters
     while(Serial.available()) Serial.read();
-    
+
     // Show prompt again
-    Serial.println("\nEnter test number (0-LED, 1-I2C Scan, 2-Loopback, 3-OLED): ");
+    Serial.println("\nEnter test (0-LED, 1-I2C, 2-ABUS_L, 3-ABUS_H, 4-DBUS, 5-Misc, 6-OLED, 7-ALL): ");
   }
 }
 
@@ -127,7 +138,6 @@ void runTest1_ESP32Communication() {
       Serial.print("  Found: 0x");
       if (addr < 16) Serial.print("0");
       Serial.print(addr, HEX);
-      // Annotate known MCP23017 addresses
       if (addr == U2_ADDR) Serial.print("  (U2 - MCP23017)");
       if (addr == U3_ADDR) Serial.print("  (U3 - MCP23017)");
       if (addr == U7_ADDR) Serial.print("  (U7 - MCP23017)");
@@ -148,104 +158,415 @@ void runTest1_ESP32Communication() {
   Serial.println("--- Test 1 Complete ---");
 }
 
-void runTest2_ImmediateLoopback() {
-  Serial.println("\n--- Test 2: U2 Loopback Test ---");
-  Serial.println("Testing D_DBUS0 (U2 GPB0) -> W_DBUS0 (U2 GPA7)");
-  Serial.println("GPB0 = Output (Pin 8), GPA7 = Input (Pin 7)");
-  Serial.println("Press any key to stop...\n");
-  
-  // Clear any existing serial data BEFORE starting the loop
-  while(Serial.available()) Serial.read();
-  delay(100);
-  
-  // Initialize U2
-  if (!mcp_U2.begin_I2C(U2_ADDR, &Wire)) {
-    Serial.println("ERROR: Failed to initialize U2 at 0x20!");
-    Serial.println("Retrying after delay...");
-    delay(100);
-    if (!mcp_U2.begin_I2C(U2_ADDR, &Wire)) {
-      Serial.println("ERROR: Second attempt failed!");
-      return;
-    }
+void runTest2_ABUSLoopback() {
+  Serial.println("\n--- Test 2: U3 ABUS[7:0] Loopback + SSD1306 (0-255) ---");
+  Serial.println("D_ABUS[0:7]: U3 GPB[0:7] (lib pins 8-15) = OUTPUT");
+  Serial.println("W_ABUS[0:7]: U3 GPA[7:0] (lib pins 7-0)  = INPUT (bit-reversed)");
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("ERROR: SSD1306 not found at 0x3C!");
+    Serial.println("--- Test 2 Failed ---");
+    return;
   }
-  Serial.println("U2 initialized successfully");
-  delay(100);
-  
-  // Configure GPB0 as OUTPUT (D_DBUS0) - pin 8 in library numbering
-  Serial.println("Configuring GPB0 (D_DBUS0) as OUTPUT...");
-  mcp_U2.pinMode(8, OUTPUT);
-  delay(50);
-  Serial.println("  GPB0 configured as OUTPUT");
-  
-  // Configure GPA7 as INPUT (W_DBUS0) - pin 7 in library numbering
-  Serial.println("Configuring GPA7 (W_DBUS0) as INPUT...");
-  mcp_U2.pinMode(7, INPUT);
-  delay(50);
-  Serial.println("  GPA7 configured as INPUT\n");
-  
-  int cycleCount = 0;
+  Serial.println("SSD1306 initialized OK");
+
+  if (!mcp_U3.begin_I2C(U3_ADDR, &Wire)) {
+    Serial.println("ERROR: U3 MCP23017 not found at 0x21!");
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("U3 NOT FOUND");
+    display.display();
+    Serial.println("--- Test 2 Failed ---");
+    return;
+  }
+  Serial.println("U3 initialized OK");
+
+  // D_ABUS[0:7] = GPB[0:7] = lib pins 8-15, all OUTPUT
+  // W_ABUS[0:7] = GPA[7:0] = lib pins 7-0,  all INPUT (bit-reversed)
+  for (int i = 0; i < 8; i++) {
+    mcp_U3.pinMode(8 + i, OUTPUT);  // GPB0-7
+    mcp_U3.pinMode(7 - i, INPUT);   // GPA7-0
+  }
+
   int passCount = 0;
   int failCount = 0;
-  
-  // Loop forever until key pressed
-  while (!Serial.available()) {
-    cycleCount++;
-    
-    // Test 1: Write HIGH to D_DBUS0
-    mcp_U2.digitalWrite(8, HIGH);
-    delay(100);
-    
-    // Read W_DBUS0
-    bool bit7_high = mcp_U2.digitalRead(7);
-    
-    // Test 2: Write LOW to D_DBUS0
-    mcp_U2.digitalWrite(8, LOW);
-    delay(100);
-    
-    // Read W_DBUS0
-    bool bit7_low = mcp_U2.digitalRead(7);
-    
-    // Check results
-    bool high_pass = bit7_high;
-    bool low_pass = !bit7_low;
-    
-    if (high_pass && low_pass) {
-      passCount++;
-      Serial.print("Cycle ");
-      Serial.print(cycleCount);
-      Serial.println(": PASS ✓");
-    } else {
-      failCount++;
-      Serial.print("Cycle ");
-      Serial.print(cycleCount);
-      Serial.print(": FAIL ✗ (HIGH=");
-      Serial.print(bit7_high ? "1" : "0");
-      Serial.print(", LOW=");
-      Serial.print(bit7_low ? "1" : "0");
-      Serial.println(")");
+
+  for (int val = 0; val <= 255; val++) {
+    // Write all 8 bits to GPB[0:7]
+    for (int b = 0; b < 8; b++) {
+      mcp_U3.digitalWrite(8 + b, (val >> b) & 1);
     }
+    delay(10);
+
+    // Read back from GPA[7:0] — W_ABUS0=GPA7, W_ABUS1=GPA6, ... W_ABUS7=GPA0
+    uint8_t readBack = 0;
+    for (int b = 0; b < 8; b++) {
+      if (mcp_U3.digitalRead(7 - b)) readBack |= (1 << b);
+    }
+
+    bool pass = (readBack == (uint8_t)val);
+    if (pass) passCount++; else failCount++;
+
+    // OLED
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print("ABUS[7:0] Loopback U3");
+
+    display.setCursor(0, 10);
+    display.print("OUT:0x");
+    if (val < 16) display.print("0");
+    display.print(val, HEX);
+    display.print("  ");
+    display.print(val); display.print("/255");
+
+    display.setCursor(0, 20);
+    display.print(" IN:0x");
+    if (readBack < 16) display.print("0");
+    display.print(readBack, HEX);
+
+    display.setTextSize(3);
+    display.setCursor(0, 34);
+    display.println(pass ? "PASS" : "FAIL");
+    display.display();
+
+    Serial.print("val=0x");
+    if (val < 16) Serial.print("0");
+    Serial.print(val, HEX);
+    Serial.print(" in=0x");
+    if (readBack < 16) Serial.print("0");
+    Serial.print(readBack, HEX);
+    Serial.println(pass ? "  PASS" : "  FAIL");
+
+    delay(30);
   }
-  
-  // Clear the serial buffer
-  while(Serial.available()) Serial.read();
-  
-  // Print summary
-  Serial.println("\n--- Test 2 Stopped ---");
-  Serial.print("Total Cycles: ");
-  Serial.println(cycleCount);
-  Serial.print("Passes: ");
-  Serial.println(passCount);
-  Serial.print("Fails: ");
-  Serial.println(failCount);
-  if (cycleCount > 0) {
-    Serial.print("Success Rate: ");
-    Serial.print((passCount * 100) / cycleCount);
-    Serial.println("%");
-  }
+
+  // Summary
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("ABUS[7:0] Done");
+  display.setTextSize(2);
+  display.setCursor(0, 16);
+  display.print("PASS:"); display.println(passCount);
+  display.setCursor(0, 36);
+  display.print("FAIL:"); display.println(failCount);
+  display.display();
+
   Serial.println("--- Test 2 Complete ---");
+  Serial.print("Pass: "); Serial.println(passCount);
+  Serial.print("Fail: "); Serial.println(failCount);
 }
 
-void runTest3_SSD1306() {
+void runTest3_ABUSHLoopback() {
+  Serial.println("\n--- Test 3: U4 ABUS_H[15:8] Loopback + SSD1306 (0-255) ---");
+  Serial.println("D_ABUS[8:15]: U4 GPB[0:7] (lib pins 8-15) = OUTPUT");
+  Serial.println("W_ABUS[8:15]: U4 GPA[7:0] (lib pins 7-0)  = INPUT (bit-reversed)");
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("ERROR: SSD1306 not found at 0x3C!");
+    Serial.println("--- Test 3 Failed ---");
+    return;
+  }
+  Serial.println("SSD1306 initialized OK");
+
+  if (!mcp_U4.begin_I2C(U4_ADDR, &Wire)) {
+    Serial.println("ERROR: U4 MCP23017 not found at 0x23!");
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("U4 NOT FOUND");
+    display.display();
+    Serial.println("--- Test 3 Failed ---");
+    return;
+  }
+  Serial.println("U4 initialized OK");
+
+  // D_ABUS[8:15] = GPB[0:7] = lib pins 8-15, all OUTPUT
+  // W_ABUS[8:15] = GPA[7:0] = lib pins 7-0,  all INPUT (bit-reversed)
+  for (int i = 0; i < 8; i++) {
+    mcp_U4.pinMode(8 + i, OUTPUT);  // GPB0-7
+    mcp_U4.pinMode(7 - i, INPUT);   // GPA7-0
+  }
+
+  int passCount = 0;
+  int failCount = 0;
+
+  for (int val = 0; val <= 255; val++) {
+    for (int b = 0; b < 8; b++) {
+      mcp_U4.digitalWrite(8 + b, (val >> b) & 1);
+    }
+    delay(10);
+
+    uint8_t readBack = 0;
+    for (int b = 0; b < 8; b++) {
+      if (mcp_U4.digitalRead(7 - b)) readBack |= (1 << b);
+    }
+
+    bool pass = (readBack == (uint8_t)val);
+    if (pass) passCount++; else failCount++;
+
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print("ABUS_H[15:8] Lpbk U4");
+
+    display.setCursor(0, 10);
+    display.print("OUT:0x");
+    if (val < 16) display.print("0");
+    display.print(val, HEX);
+    display.print("  ");
+    display.print(val); display.print("/255");
+
+    display.setCursor(0, 20);
+    display.print(" IN:0x");
+    if (readBack < 16) display.print("0");
+    display.print(readBack, HEX);
+
+    display.setTextSize(3);
+    display.setCursor(0, 34);
+    display.println(pass ? "PASS" : "FAIL");
+    display.display();
+
+    Serial.print("val=0x");
+    if (val < 16) Serial.print("0");
+    Serial.print(val, HEX);
+    Serial.print(" in=0x");
+    if (readBack < 16) Serial.print("0");
+    Serial.print(readBack, HEX);
+    Serial.println(pass ? "  PASS" : "  FAIL");
+
+    delay(30);
+  }
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("ABUS_H[15:8] Done");
+  display.setTextSize(2);
+  display.setCursor(0, 16);
+  display.print("PASS:"); display.println(passCount);
+  display.setCursor(0, 36);
+  display.print("FAIL:"); display.println(failCount);
+  display.display();
+
+  Serial.println("--- Test 3 Complete ---");
+  Serial.print("Pass: "); Serial.println(passCount);
+  Serial.print("Fail: "); Serial.println(failCount);
+}
+
+void runTest4_DBUSLoopback() {
+  Serial.println("\n--- Test 4: U2 DBUS[7:0] Loopback + SSD1306 (0-255) ---");
+  Serial.println("D_DBUS[0:7]: U2 GPB[0:7] (lib pins 8-15) = OUTPUT");
+  Serial.println("W_DBUS[0:7]: U2 GPA[7:0] (lib pins 7-0)  = INPUT (bit-reversed)");
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("ERROR: SSD1306 not found at 0x3C!");
+    Serial.println("--- Test 4 Failed ---");
+    return;
+  }
+  Serial.println("SSD1306 initialized OK");
+
+  if (!mcp_U2.begin_I2C(U2_ADDR, &Wire)) {
+    Serial.println("ERROR: U2 MCP23017 not found at 0x20!");
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("U2 NOT FOUND");
+    display.display();
+    Serial.println("--- Test 4 Failed ---");
+    return;
+  }
+  Serial.println("U2 initialized OK");
+
+  // D_DBUS[0:7] = GPB[0:7] = lib pins 8-15, all OUTPUT
+  // W_DBUS[0:7] = GPA[7:0] = lib pins 7-0,  all INPUT (bit-reversed)
+  for (int i = 0; i < 8; i++) {
+    mcp_U2.pinMode(8 + i, OUTPUT);
+    mcp_U2.pinMode(7 - i, INPUT);
+  }
+
+  int passCount = 0;
+  int failCount = 0;
+
+  for (int val = 0; val <= 255; val++) {
+    for (int b = 0; b < 8; b++) {
+      mcp_U2.digitalWrite(8 + b, (val >> b) & 1);
+    }
+    delay(10);
+
+    uint8_t readBack = 0;
+    for (int b = 0; b < 8; b++) {
+      if (mcp_U2.digitalRead(7 - b)) readBack |= (1 << b);
+    }
+
+    bool pass = (readBack == (uint8_t)val);
+    if (pass) passCount++; else failCount++;
+
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print("DBUS[7:0] Loopback U2");
+
+    display.setCursor(0, 10);
+    display.print("OUT:0x");
+    if (val < 16) display.print("0");
+    display.print(val, HEX);
+    display.print("  ");
+    display.print(val); display.print("/255");
+
+    display.setCursor(0, 20);
+    display.print(" IN:0x");
+    if (readBack < 16) display.print("0");
+    display.print(readBack, HEX);
+
+    display.setTextSize(3);
+    display.setCursor(0, 34);
+    display.println(pass ? "PASS" : "FAIL");
+    display.display();
+
+    Serial.print("val=0x");
+    if (val < 16) Serial.print("0");
+    Serial.print(val, HEX);
+    Serial.print(" in=0x");
+    if (readBack < 16) Serial.print("0");
+    Serial.print(readBack, HEX);
+    Serial.println(pass ? "  PASS" : "  FAIL");
+
+    delay(30);
+  }
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("DBUS[7:0] Done");
+  display.setTextSize(2);
+  display.setCursor(0, 16);
+  display.print("PASS:"); display.println(passCount);
+  display.setCursor(0, 36);
+  display.print("FAIL:"); display.println(failCount);
+  display.display();
+
+  Serial.println("--- Test 4 Complete ---");
+  Serial.print("Pass: "); Serial.println(passCount);
+  Serial.print("Fail: "); Serial.println(failCount);
+}
+
+void runTest5_MiscCtrlLoopback() {
+  Serial.println("\n--- Test 5: U7 Misc_Ctrl[5:0] Loopback + SSD1306 (0-63) ---");
+  Serial.println("OUT: U7 GPB[0:5] (lib pins 8-13)");
+  Serial.println("IN:  U7 GPA[7:2] (lib pins 7-2) (bit-reversed)");
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("ERROR: SSD1306 not found at 0x3C!");
+    Serial.println("--- Test 5 Failed ---");
+    return;
+  }
+  Serial.println("SSD1306 initialized OK");
+
+  if (!mcp_U7.begin_I2C(U7_ADDR, &Wire)) {
+    Serial.println("ERROR: U7 MCP23017 not found at 0x22!");
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("U7 NOT FOUND");
+    display.display();
+    Serial.println("--- Test 5 Failed ---");
+    return;
+  }
+  Serial.println("U7 initialized OK");
+
+  // GPB[0:5] (lib pins 8-13) = output, bit 0-5
+  // GPA[7:2] (lib pins 7-2)  = input,  bit 0-5 (reversed: GPA7=bit0, GPA2=bit5)
+  for (int i = 0; i < 6; i++) {
+    mcp_U7.pinMode(8 + i, OUTPUT);  // GPB0-5
+    mcp_U7.pinMode(7 - i, INPUT);   // GPA7-2
+  }
+
+  int passCount = 0;
+  int failCount = 0;
+
+  for (int val = 0; val <= 63; val++) {
+    for (int b = 0; b < 6; b++) {
+      mcp_U7.digitalWrite(8 + b, (val >> b) & 1);
+    }
+    delay(10);
+
+    uint8_t readBack = 0;
+    for (int b = 0; b < 6; b++) {
+      if (mcp_U7.digitalRead(7 - b)) readBack |= (1 << b);
+    }
+
+    bool pass = (readBack == (uint8_t)val);
+    if (pass) passCount++; else failCount++;
+
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print("Misc_Ctrl[5:0] U7");
+
+    display.setCursor(0, 10);
+    display.print("OUT:0x");
+    if (val < 16) display.print("0");
+    display.print(val, HEX);
+    display.print("  ");
+    display.print(val); display.print("/63");
+
+    display.setCursor(0, 20);
+    display.print(" IN:0x");
+    if (readBack < 16) display.print("0");
+    display.print(readBack, HEX);
+
+    display.setTextSize(3);
+    display.setCursor(0, 34);
+    display.println(pass ? "PASS" : "FAIL");
+    display.display();
+
+    Serial.print("val=0x");
+    if (val < 16) Serial.print("0");
+    Serial.print(val, HEX);
+    Serial.print(" in=0x");
+    if (readBack < 16) Serial.print("0");
+    Serial.print(readBack, HEX);
+    Serial.println(pass ? "  PASS" : "  FAIL");
+
+    delay(30);
+  }
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("Misc_Ctrl[5:0] Done");
+  display.setTextSize(2);
+  display.setCursor(0, 16);
+  display.print("PASS:"); display.println(passCount);
+  display.setCursor(0, 36);
+  display.print("FAIL:"); display.println(failCount);
+  display.display();
+
+  Serial.println("--- Test 5 Complete ---");
+  Serial.print("Pass: "); Serial.println(passCount);
+  Serial.print("Fail: "); Serial.println(failCount);
+}
+
+void runTest6_SSD1306() {
   Serial.println("\n--- Test 3: SSD1306 OLED Test ---");
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
@@ -296,5 +617,27 @@ void runTest3_SSD1306() {
 
   display.clearDisplay();
   display.display();
-  Serial.println("--- Test 3 Complete ---");
+  Serial.println("--- Test 6 Complete ---");
+}
+
+void runTest7_AllTests() {
+  Serial.println("\n--- Test 7: Run All Tests (looping, any key to stop) ---");
+  int pass = 0, fail = 0, run = 0;
+
+  while (!Serial.available()) {
+    run++;
+    Serial.print("\n=== Loop "); Serial.print(run); Serial.println(" ===");
+
+    runTest0_LEDCount();        if (Serial.available()) break;
+    runTest1_ESP32Communication(); if (Serial.available()) break;
+    runTest2_ABUSLoopback();    if (Serial.available()) break;
+    runTest3_ABUSHLoopback();   if (Serial.available()) break;
+    runTest4_DBUSLoopback();    if (Serial.available()) break;
+    runTest5_MiscCtrlLoopback(); if (Serial.available()) break;
+    runTest6_SSD1306();
+  }
+
+  while (Serial.available()) Serial.read();
+  Serial.println("\n--- Test 7 Stopped ---");
+  Serial.print("Loops completed: "); Serial.println(run);
 }
