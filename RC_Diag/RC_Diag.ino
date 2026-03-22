@@ -114,7 +114,7 @@ void setup() {
   Serial.println("8 - Ctrl_FF: D_LDHL, D_LDH, D_LDL toggle 3Hz (12 cycles each)");
   Serial.println("9 - Reg: LDHL pattern 011111110, 10Hz, 12 cycles");
   Serial.println("A - Test A: Auto 32-cycle bus walk");
-  Serial.println("B - Test B: Interactive - D0-D7, A0-AF, CL, Q");
+  Serial.println("B - Test B: Interactive - Dyy, Eyy, Axxxx, CL, Q");
   Serial.println("================================\n");
 }
 
@@ -160,11 +160,12 @@ void loop() {
       runTestB_Interactive();
     }
 
+
     // Clear any remaining characters
     while(Serial.available()) Serial.read();
 
     // Show prompt again
-    Serial.println("\nEnter test (0-9, A-Auto, B-Interactive): ");
+    Serial.println("\nEnter test (0-9, A-Auto, B-Interactive, C-Single): ");
   }
 }
 
@@ -1016,6 +1017,10 @@ void runTest10_WriteR0() {
   const bool dx [8] = {0, 1, 1, 1, 1, 1, 1, 0};  // Dx       = 01111110
   const int stepMs = 12;
 
+  uint16_t abusMask = 0x0000;
+  uint8_t dbusMask = 0x00;
+  uint8_t controlMask = 0x00;
+
   while (Serial.available()) Serial.read();
 
   // Cycles 1-8: ENL + LDL
@@ -1138,8 +1143,10 @@ void runTest10_WriteR0() {
 
 void runTestB_Interactive() {
   Serial.println("\n--- Test B: Interactive signal driver ---");
-  Serial.println("D0-D7: DBUS (ENL+LDL)  E0-E7: DBUS (ENH+LDH)  A0-AF: ABUS (ENHL+LDHL)");
-  Serial.println("CL = clear all   Q = quit");
+  Serial.println("Dyy   = DBUS low  byte hex (ENL+LDL)    e.g. D3F");
+  Serial.println("Eyy   = DBUS high byte hex (ENH+LDH)    e.g. E80");
+  Serial.println("Axxxx = ABUS 16-bit hex   (ENHL+LDHL)   e.g. A00FF");
+  Serial.println("CL = clock zeros   Q = quit");
 
   display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
 
@@ -1175,11 +1182,6 @@ void runTestB_Interactive() {
   const bool ldx[8] = {0, 0, 0, 1, 1, 0, 0, 0};  // 00011000
   const int stepMs = 12;
 
-  // Accumulated bus values — each command ORs its bit in
-  uint8_t  dbusMask = 0x00;   // DBUS[7:0] via ENL+LDL
-  uint8_t  ebusMask = 0x00;   // DBUS[7:0] via ENH+LDH
-  uint16_t abusMask = 0x0000; // ABUS[15:0]
-
   while (Serial.available()) Serial.read();
 
   while (true) {
@@ -1187,45 +1189,43 @@ void runTestB_Interactive() {
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
     display.setCursor(0, 0);  display.println("Test B: Interactive");
-    display.setCursor(0, 16); display.println("D0-D7  A0-AF");
-    display.setCursor(0, 28); display.println("CL=clear  Q=quit");
-    display.setCursor(0, 44); display.println("Waiting for input...");
+    display.setCursor(0, 10); display.println("Dyy  ENL+LDL");
+    display.setCursor(0, 20); display.println("Eyy  ENH+LDH");
+    display.setCursor(0, 30); display.println("Axxxx ENHL+LDHL");
+    display.setCursor(0, 42); display.println("CL=zeros  Q=quit");
+    display.setCursor(0, 54); display.println("Waiting...");
     display.display();
 
-    Serial.print("\nSignal> ");
+    Serial.print("\nCmd> ");
 
-    // Read 2 non-whitespace chars, echo each immediately
-    char c1 = 0, c2 = 0;
-    while (c1 == 0) {
+    // Read a line until newline
+    String input = "";
+    while (true) {
       if (Serial.available()) {
         char c = Serial.read();
-        if (c > ' ') { c1 = toupper(c); Serial.print(c1); }
+        if (c == '\n' || c == '\r') break;
+        input += c;
       }
     }
-    while (c2 == 0) {
-      if (Serial.available()) {
-        char c = Serial.read();
-        if (c > ' ') { c2 = toupper(c); Serial.println(c2); }
-      }
-    }
-    delay(50);
-    while (Serial.available()) Serial.read();
+    input.trim();
+    input.toUpperCase();
 
-    if (c1 == 'Q') break;
+    if (input.length() == 0) continue;
+    if (input == "Q") break;
 
-    // CL — clock zeros into all registers with proper timing
-    if (c1 == 'C' && c2 == 'L') {
+    // CL — clock zeros into all registers
+    if (input == "CL") {
       Serial.println("CL: clocking zeros into D-low, D-high, ABUS...");
 
-      // Phase 1: DBUS=0, ENL+LDL (1 cycle)
+      // Phase 1: DBUS=0, ENL+LDL
       mcp_U2.writeGPIOB(0x00);
       for (int step = 0; step < 8; step++) {
         mcp_U7.digitalWrite(9, enx[step]);  // ENL
         mcp_U7.digitalWrite(8, ldx[step]);  // LDL
         display.clearDisplay(); display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1); display.setCursor(0, 0);
-        display.print("CL 1/3  D=0 ENL+LDL");
-        display.setCursor(0,14); display.print("Step "); display.print(step+1); display.print("/8");
+        display.println("CL 1/3  D=0 ENL+LDL");
+        display.setCursor(0,14); display.print("Step "); display.print(step+1); display.println("/8");
         display.setCursor(0,28); display.print("ENL="); display.print(enx[step]);
         display.print("  LDL="); display.println(ldx[step]);
         display.display();
@@ -1233,15 +1233,15 @@ void runTestB_Interactive() {
       }
       mcp_U7.digitalWrite(9, LOW); mcp_U7.digitalWrite(8, LOW);
 
-      // Phase 2: DBUS=0, ENH+LDH (1 cycle)
+      // Phase 2: DBUS=0, ENH+LDH
       mcp_U2.writeGPIOB(0x00);
       for (int step = 0; step < 8; step++) {
         mcp_U7.digitalWrite(11, enx[step]);  // ENH
         mcp_U7.digitalWrite(10, ldx[step]);  // LDH
         display.clearDisplay(); display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1); display.setCursor(0, 0);
-        display.print("CL 2/3  D=0 ENH+LDH");
-        display.setCursor(0,14); display.print("Step "); display.print(step+1); display.print("/8");
+        display.println("CL 2/3  D=0 ENH+LDH");
+        display.setCursor(0,14); display.print("Step "); display.print(step+1); display.println("/8");
         display.setCursor(0,28); display.print("ENH="); display.print(enx[step]);
         display.print("  LDH="); display.println(ldx[step]);
         display.display();
@@ -1249,7 +1249,7 @@ void runTestB_Interactive() {
       }
       mcp_U7.digitalWrite(11, LOW); mcp_U7.digitalWrite(10, LOW);
 
-      // Phase 3: ABUS=0, ENHL+LDHL (1 cycle)
+      // Phase 3: ABUS=0, ENHL+LDHL
       mcp_U3.writeGPIOB(0x00);
       mcp_U4.writeGPIOB(0x00);
       for (int step = 0; step < 8; step++) {
@@ -1257,8 +1257,8 @@ void runTestB_Interactive() {
         mcp_U7.digitalWrite(12, ldx[step]);  // LDHL
         display.clearDisplay(); display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1); display.setCursor(0, 0);
-        display.print("CL 3/3  A=0 ENHL+LDHL");
-        display.setCursor(0,14); display.print("Step "); display.print(step+1); display.print("/8");
+        display.println("CL 3/3  A=0 ENHL+LDHL");
+        display.setCursor(0,14); display.print("Step "); display.print(step+1); display.println("/8");
         display.setCursor(0,28); display.print("ENHL="); display.print(enx[step]);
         display.print(" LDHL="); display.println(ldx[step]);
         display.display();
@@ -1266,9 +1266,6 @@ void runTestB_Interactive() {
       }
       mcp_U7.digitalWrite(13, LOW); mcp_U7.digitalWrite(12, LOW);
 
-      dbusMask = 0x00;
-      ebusMask = 0x00;
-      abusMask = 0x0000;
       Serial.println("CL done.");
       display.clearDisplay(); display.setTextColor(SSD1306_WHITE);
       display.setTextSize(2); display.setCursor(0, 20); display.println("CL Done");
@@ -1276,83 +1273,99 @@ void runTestB_Interactive() {
       continue;
     }
 
-    // Parse bit number from second char (0-9, A-F)
-    int bitNum = -1;
-    if (c2 >= '0' && c2 <= '9') bitNum = c2 - '0';
-    else if (c2 >= 'A' && c2 <= 'F') bitNum = 10 + (c2 - 'A');
+    char cmd = input.charAt(0);
+    String hexStr = input.substring(1);
 
-    if (bitNum < 0 || (c1 != 'D' && c1 != 'E' && c1 != 'A')) {
-      Serial.println("Unknown. Use D0-D7, E0-E7, A0-AF, CL, Q");
-      continue;
-    }
-    if ((c1 == 'D' || c1 == 'E') && bitNum > 7) { Serial.println("D/E: 0-7 only"); continue; }
-    if (c1 == 'A' && bitNum > 15) { Serial.println("A: 0-F only"); continue; }
-
-    char sigName[4] = {c1, (char)('0' + (bitNum < 10 ? bitNum : 0)), 0, 0};
-    if (bitNum >= 10) sigName[1] = 'A' + (bitNum - 10);
-
-    // Accumulate bit into running mask
-    if (c1 == 'D') {
-      dbusMask |= (uint8_t)(1 << bitNum);
-      Serial.print("Running "); Serial.print(sigName);
-      Serial.print("  DBUS=0x"); Serial.println(dbusMask, HEX);
-    } else if (c1 == 'E') {
-      ebusMask |= (uint8_t)(1 << bitNum);
-      Serial.print("Running "); Serial.print(sigName);
-      Serial.print("  DBUS(H)=0x"); Serial.println(ebusMask, HEX);
-    } else {
-      abusMask |= (uint16_t)(1 << bitNum);
-      Serial.print("Running "); Serial.print(sigName);
-      Serial.print("  ABUS=0x"); Serial.println(abusMask, HEX);
-    }
-
-    // Run 1 cycle (8 steps) using accumulated mask
-    for (int step = 0; step < 8; step++) {
-      if (c1 == 'D') {
-        mcp_U2.writeGPIOB(dx[step] ? dbusMask : 0x00);
+    if (cmd == 'D' && hexStr.length() == 2) {
+      uint8_t val = (uint8_t)strtoul(hexStr.c_str(), NULL, 16);
+      Serial.print("D=0x"); Serial.println(val, HEX);
+      for (int step = 0; step < 8; step++) {
+        uint8_t bv = dx[step] ? val : 0x00;
+        mcp_U2.writeGPIOB(bv);
         mcp_U7.digitalWrite(9, enx[step]);  // ENL
         mcp_U7.digitalWrite(8, ldx[step]);  // LDL
-      } else if (c1 == 'E') {
-        mcp_U2.writeGPIOB(dx[step] ? ebusMask : 0x00);
+        Serial.print("s"); Serial.print(step+1);
+        Serial.print("  DBUS U2(0x20) GPB=0x"); Serial.print(bv, HEX);
+        Serial.print("  ENL U7(0x22) GPB1="); Serial.print(enx[step]);
+        Serial.print("  LDL U7(0x22) GPB0="); Serial.println(ldx[step]);
+        display.clearDisplay(); display.setTextColor(SSD1306_WHITE);
+        display.setTextSize(1); display.setCursor(0,0);
+        display.print("Test B  s"); display.print(step+1); display.println("/8");
+        display.setTextSize(2); display.setCursor(0,12);
+        display.print("D=0x"); display.println(val, HEX);
+        display.setTextSize(1); display.setCursor(0,36);
+        display.print("GPB=0x"); display.print(bv, HEX);
+        display.print(" EN="); display.print(enx[step]);
+        display.print(" LD="); display.println(ldx[step]);
+        display.display();
+        delay(stepMs);
+      }
+      mcp_U7.digitalWrite(9, LOW); mcp_U7.digitalWrite(8, LOW);
+      Serial.println("Done.");
+
+    } else if (cmd == 'E' && hexStr.length() == 2) {
+      uint8_t val = (uint8_t)strtoul(hexStr.c_str(), NULL, 16);
+      Serial.print("E=0x"); Serial.println(val, HEX);
+      for (int step = 0; step < 8; step++) {
+        uint8_t bv = dx[step] ? val : 0x00;
+        mcp_U2.writeGPIOB(bv);
         mcp_U7.digitalWrite(11, enx[step]);  // ENH
         mcp_U7.digitalWrite(10, ldx[step]);  // LDH
-      } else {
-        uint8_t u3Val = dx[step] ? (uint8_t)(abusMask & 0xFF)        : 0x00;
-        uint8_t u4Val = dx[step] ? (uint8_t)((abusMask >> 8) & 0xFF) : 0x00;
+        Serial.print("s"); Serial.print(step+1);
+        Serial.print("  DBUS U2(0x20) GPB=0x"); Serial.print(bv, HEX);
+        Serial.print("  ENH U7(0x22) GPB3="); Serial.print(enx[step]);
+        Serial.print("  LDH U7(0x22) GPB2="); Serial.println(ldx[step]);
+        display.clearDisplay(); display.setTextColor(SSD1306_WHITE);
+        display.setTextSize(1); display.setCursor(0,0);
+        display.print("Test B  s"); display.print(step+1); display.println("/8");
+        display.setTextSize(2); display.setCursor(0,12);
+        display.print("E=0x"); display.println(val, HEX);
+        display.setTextSize(1); display.setCursor(0,36);
+        display.print("GPB=0x"); display.print(bv, HEX);
+        display.print(" EN="); display.print(enx[step]);
+        display.print(" LD="); display.println(ldx[step]);
+        display.display();
+        delay(stepMs);
+      }
+      mcp_U7.digitalWrite(11, LOW); mcp_U7.digitalWrite(10, LOW);
+      Serial.println("Done.");
+
+    } else if (cmd == 'A' && hexStr.length() == 4) {
+      uint16_t val = (uint16_t)strtoul(hexStr.c_str(), NULL, 16);
+      Serial.print("A=0x"); Serial.println(val, HEX);
+      for (int step = 0; step < 8; step++) {
+        uint8_t u3Val = dx[step] ? (uint8_t)(val & 0xFF)        : 0x00;
+        uint8_t u4Val = dx[step] ? (uint8_t)((val >> 8) & 0xFF) : 0x00;
         mcp_U3.writeGPIOB(u3Val);
         mcp_U4.writeGPIOB(u4Val);
         mcp_U7.digitalWrite(13, enx[step]);  // ENHL
-        mcp_U7.digitalWrite(12, ldx[step]);  // LDHL
+        mcp_U7.digitalWrite(12, ldx[step]);  // LDHL - clocks high byte
+        mcp_U7.digitalWrite(8,  ldx[step]);  // LDL  - clocks low byte
+        Serial.print("s"); Serial.print(step+1);
+        Serial.print("  ABSL U3(0x21) GPB=0x"); Serial.print(u3Val, HEX);
+        Serial.print("  ABSH U4(0x23) GPB=0x"); Serial.print(u4Val, HEX);
+        Serial.print("  ENHL U7(0x22) GPB5="); Serial.print(enx[step]);
+        Serial.print("  LDHL U7(0x22) GPB4="); Serial.print(ldx[step]);
+        Serial.print("  LDL U7(0x22) GPB0="); Serial.println(ldx[step]);
+        display.clearDisplay(); display.setTextColor(SSD1306_WHITE);
+        display.setTextSize(1); display.setCursor(0,0);
+        display.print("Test B  s"); display.print(step+1); display.println("/8");
+        display.setTextSize(2); display.setCursor(0,12);
+        display.print("A=0x"); display.println(val, HEX);
+        display.setTextSize(1); display.setCursor(0,36);
+        display.print("L=0x"); display.print(u3Val, HEX);
+        display.print(" H=0x"); display.print(u4Val, HEX);
+        display.print(" EN="); display.print(enx[step]);
+        display.print(" LD="); display.println(ldx[step]);
+        display.display();
+        delay(stepMs);
       }
+      mcp_U7.digitalWrite(13, LOW); mcp_U7.digitalWrite(12, LOW); mcp_U7.digitalWrite(8, LOW);
+      Serial.println("Done.");
 
-      display.clearDisplay();
-      display.setTextColor(SSD1306_WHITE);
-      display.setTextSize(1);
-      display.setCursor(0, 0);
-      display.print("Test B   Step "); display.print(step + 1); display.print("/8");
-      display.setTextSize(2);
-      display.setCursor(0, 14); display.println(sigName);
-      display.setTextSize(1);
-      display.setCursor(0, 34); display.print("sig="); display.println(dx[step]);
-      display.setCursor(0, 44); display.print("en ="); display.print(enx[step]);
-      display.print("  ld="); display.println(ldx[step]);
-      display.display();
-
-      delay(stepMs);
-    }
-
-    // Idle control signals after cycle
-    if (c1 == 'D') {
-      mcp_U7.digitalWrite(9, LOW);
-      mcp_U7.digitalWrite(8, LOW);
-    } else if (c1 == 'E') {
-      mcp_U7.digitalWrite(11, LOW);
-      mcp_U7.digitalWrite(10, LOW);
     } else {
-      mcp_U7.digitalWrite(13, LOW);
-      mcp_U7.digitalWrite(12, LOW);
+      Serial.println("Unknown. Use Dyy, Eyy, Axxxx, CL, Q");
     }
-    Serial.println("Done.");
   }
 
   // Idle all on exit
