@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find d:/OneDrive/Desktop/arduino/Relay_Computer -type d \\\\\\(-iname *hardware* -o -iname *schematic* -o -iname *pcb* -o -iname *kicad* -o -iname *eagle* \\\\\\))",
+      "Bash(grep -E \"\\\\.\\(csv|txt|md|net\\)$\")",
+      "Bash(find d:/OneDrive/Desktop/arduino -maxdepth 2 -iname *.md -o -iname *.txt)",
+      "Bash(grep -n \"$K17_9\\\\|$K18_9\\\\|$K19_9\\\\|$K20_9\" \"C:\\\\Users\\\\gregc\\\\Downloads\\\\Netlist_RC_-_UV_RegisterRC_2026-03-20.net\")",
+      "Read(//^/\\(/ {net=$0; getline; name=$0} /J3-|J4-/ {print NR\"\"\"\"\"\"\"\": \"\"\"\"\"\"\"\" net \"\"\"\"\"\"\"\"/**)",
+      "Bash(grep -A2 \"^\\\\\\($K17_9\\\\|$K18_9\\\\|$K19_9\\\\|$K20_9\" \"C:\\\\Users\\\\gregc\\\\Downloads\\\\Netlist_RC_-_UV_RegisterRC_2026-03-20.net\")",
+      "Bash(grep -A2 '^\\\\$K17_9\\\\|^\\\\$K18_9\\\\|^\\\\$K19_9\\\\|^\\\\$K20_9' \"C:\\\\Users\\\\gregc\\\\Downloads\\\\Netlist_RC_-_UV_RegisterRC_2026-03-20.net\")",
+      "Bash(grep -n \"^$K2[1-5]_9\" \"C:\\\\Users\\\\gregc\\\\Downloads\\\\Netlist_RC_-_UV_RegisterRC_2026-03-20.net\")",
+      "Bash(gh repo:*)",
+      "Bash(where gh:*)",
+      "Bash(where git:*)",
+      "Bash(winget install:*)",
+      "Bash(python -c \"import torch; print\\('torch', torch.__version__\\)\")",
+      "Bash(powershell -Command \"Get-PSDrive C,D | Select-Object Name,Used,Free | Format-Table\")",
+      "Bash(powershell -Command 'Get-ChildItem '\\\\''C:\\\\Users\\\\gregc'\\\\'' -Directory | ForEach-Object { $size = \\(Get-ChildItem $_.FullName -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum\\).Sum; [PSCustomObject]@{Folder=$_.Name; GB=[math]::Round\\($size/1GB,2\\)} } | Sort-Object GB -Descending | Format-Table -AutoSize')",
+      "Bash(powershell -Command \"[System.Environment]::SetEnvironmentVariable\\('PLATFORMIO_CORE_DIR', 'D:\\\\\\\\.platformio', 'User'\\)\")",
+      "Bash(python -c \"import torch; print\\(torch.__version__\\); print\\('CUDA:', torch.cuda.is_available\\(\\)\\)\")",
+      "Read(//d//**)",
+      "Bash(where python:*)"
+    ],
+    "additionalDirectories": [
+      "d:\\OneDrive\\ai_learning"
+    ]
+  }
+}

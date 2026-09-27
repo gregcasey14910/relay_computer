@@ -47,12 +47,10 @@ void runTest0_LEDCount() {
   for (int i = 0; i <= 1023; i++) {
     for (int b = 0; b < 6; b++) digitalWrite(LED_PINS[b], (i >> b) & 1);
     if (u7_ok) {
-      // GPA: bit0=bit6, bit1=bit9 — write both at once
-      uint8_t gpa = ((i >> 6) & 1) | (((i >> 9) & 1) << 1);
-      // GPB: bit6=bit8, bit7=bit7 — write both at once
-      uint8_t gpb = (((i >> 8) & 1) << 6) | (((i >> 7) & 1) << 7);
-      mcp_U7.writeGPIOA(gpa);
-      mcp_U7.writeGPIOB(gpb);
+      mcp_U7.digitalWrite(0,  (i >> 6) & 1);
+      mcp_U7.digitalWrite(15, (i >> 7) & 1);
+      mcp_U7.digitalWrite(14, (i >> 8) & 1);
+      mcp_U7.digitalWrite(1,  (i >> 9) & 1);
     }
     if (i % 64 == 0) {
       display.clearDisplay();
@@ -72,8 +70,10 @@ void runTest0_LEDCount() {
   }
   for (int b = 0; b < 6; b++) digitalWrite(LED_PINS[b], LOW);
   if (u7_ok) {
-    mcp_U7.writeGPIOA(0x00);
-    mcp_U7.writeGPIOB(0x00);
+    mcp_U7.digitalWrite(0,  LOW);
+    mcp_U7.digitalWrite(15, LOW);
+    mcp_U7.digitalWrite(14, LOW);
+    mcp_U7.digitalWrite(1,  LOW);
   }
 
   display.clearDisplay();
@@ -88,8 +88,8 @@ void runTest0_LEDCount() {
 }
 
 void setup() {
-  Serial.begin(115200);t
-  delay(3000);  // wait for USB CDC to re-enumerate and monitor to reconnect
+  Serial.begin(115200);
+  delay(500);  // Wait for USB CDC to settle
 
   Serial.println("Serial started!");
 
@@ -99,7 +99,7 @@ void setup() {
   delay(100);
   Wire.begin(0, 1);
   Wire.setClock(50000);  // 50 kHz for reliability
-  Wire.setTimeOut(200);  // 200ms — fast enough to avoid error spam, safe for SSD1306 full frame
+  Wire.setTimeOut(5000);
 
   // Reset all MCP23017 chips to safe zero state on every boot.
   // MCP23017 retains output register state across ESP32 resets (same power
@@ -138,6 +138,7 @@ void setup() {
 void loop() {
   if (Serial.available()) {
     char input = Serial.read();
+    Serial.println(input);  // Echo it back
 
     if (input == '0') {
       runTest0_LEDCount();
