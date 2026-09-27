@@ -1,0 +1,186 @@
+================================================================================
+ RC_Test.ino  -  Descriptive Pseudo-Code
+ Target : ESP32-C3 (esp32-c3-devkitm-1), COM6, Serial monitor 115200 baud
+ Purpose: One-shot bench test of the register-board I/O expanders:
+          1) Bus loopback self-test on DBUS, ABUS low, ABUS high
+          2) Strobe the A_2_R control line while toggling ABUS[7:0]
+ Runs once in setup(); loop() is empty.
+================================================================================
+
+
+--------------------------------------------------------------------------------
+ HARDWARE MAP
+--------------------------------------------------------------------------------
+ I2C bus : SDA = GPIO0, SCL = GPIO1, 50 kHz, 200 ms timeout
+
+ Device        I2C addr   Port B (GPB0-7, OUTPUTS)     Port A (GPA0-7, INPUTS)
+ ------------  --------   ---------------------------  -------------------------
+ OLED SSD1306  0x3C       128x64 status display
+ U2 MCP23017   0x20       D[7:0]    (drive DBUS)       DBUS readback (bit-reversed)
+ U3 MCP23017   0x21       A[7:0]    (drive ABUS low)   ABUS lo readback (bit-reversed)
+ U4 MCP23017   0x23       A[15:8]   (drive ABUS high)  ABUS hi readback (bit-reversed)
+ U7 MCP23017   0x22       control strobes (below)      (unused)
+
+ U7 control lines (Port B):
+     GPB0  LDL     load low
+     GPB1  D_2_RL  DBUS -> R register bits 7:0
+     GPB2  LDH     load high
+     GPB3  D_2_RH  DBUS -> R register bits 15:8   (defined, NOT configured - see notes)
+     GPB4  LDHL    load high+low
+     GPB5  A_2_R   ABUS -> R register
+
+ Loopback wiring note: output bit GPB[n] returns on input GPA[7-n]
+ (intentional bit reversal per schematic), so readback is passed through
+ reverseBits() before comparing.
+
+
+--------------------------------------------------------------------------------
+ HELPER FUNCTIONS
+--------------------------------------------------------------------------------
+
+ reverseBits(byte b) -> byte
+     Mirror the 8 bits (bit0<->bit7, bit1<->bit6, ...) using a swap-nibbles,
+     swap-pairs, swap-bits sequence.
+
+ loopbackTest(expander, label)
+     patterns = [0xFF, 0x00, 0x55, 0xAA, 0xF0, 0x0F]
+     pass = TRUE
+     print "--- <label> GPB->GPA loopback ---"
+     FOR EACH pattern:
+         write pattern to Port B
+         wait 5 ms for the bus to settle
+         gpb  = read Port B            (confirms the latch took the write)
+         raw  = read Port A            (what came back through the bus)
+         got  = reverseBits(raw)
+         IF got != pattern THEN pass = FALSE
+         print pattern, gpb, raw, got, OK/FAIL
+     write 0x00 to Port B              (release the bus)
+     print   "<label>: LOOPBACK PASS|FAIL"      to Serial
+     display "<label>: PASS|FAIL"               on OLED
+
+ pulseStrobe(count, strobePin)          -- the ACTIVE test routine
+     Hold A[15:8] = 0x00  (U4)
+     Hold DBUS    = 0x00  (U2)
+     FOR i = 0 .. count-1:
+         A[7:0] = 0xFF if i is even, 0x00 if i is odd     (U3)
+         U7.strobePin = HIGH ; wait 400 ms
+         U7.strobePin = LOW  ; wait 400 ms
+     Return U2, U3, U4 outputs to 0x00
+     -- with count = 3 the ABUS low sequence is: FF, 00, FF  (~2.4 s total)
+
+ pulse(expander, pin, count)            -- UNUSED in current flow
+     Repeat count times: pin HIGH 80 ms, pin LOW 80 ms.
+
+ pulseA0(count)                          -- UNUSED in current flow
+     Repeat count times (160 ms per cycle):
+         A0 HIGH
+           16 ms   (Q1: A_2_R still low)
+         A_2_R HIGH
+           48 ms   (Q2+Q3)
+         A_2_R LOW
+           16 ms   (Q4)
+         A0 LOW
+           80 ms   (off period)
+     i.e. A_2_R is nested inside the A0 pulse so the data is stable before
+     and after the strobe.
+
+
+--------------------------------------------------------------------------------
+ setup()   -- entire test runs here, once per reset
+--------------------------------------------------------------------------------
+
+ 1. INIT SERIAL
+      Serial @ 115200
+      wait 3 s  (let USB-CDC re-enumerate and the monitor reconnect)
+
+ 2. INIT I2C
+      Wire on SDA=0 / SCL=1, 50 kHz clock, 200 ms timeout
+
+ 3. INIT OLED
+      begin @0x3C, clear, white text size 1, home cursor
+      show "RC_Test ready"
+      Serial: "=== RC_Test ==="
+
+ 4. PROBE EXPANDERS  (in order U2, U3, U7, U4)
+      FOR EACH expander:
+          IF begin_I2C(addr) fails:
+              Serial + OLED: "<Ux> not found!"
+              ABORT setup()   -> board sits idle, remaining chips untested
+
+ 5. CONFIGURE PINS
+      U2: GPA0-7 INPUT  ; GPB0-7 OUTPUT, driven LOW    (DBUS)
+      U3: GPA0-7 INPUT  ; GPB0-7 OUTPUT, driven LOW    (ABUS 7:0)
+      U4: GPA0-7 INPUT  ; GPB0-7 OUTPUT, driven LOW    (ABUS 15:8)
+      U7: D_2_RL, A_2_R, LDHL, LDH, LDL -> OUTPUT, driven LOW
+          (D_2_RH left at power-on default = INPUT / high-Z)
+
+ 6. BUS LOOPBACK TESTS
+      loopbackTest(U2, "U2 DBUS")
+      loopbackTest(U3, "U3 ABUS_LO")
+      loopbackTest(U4, "U4 ABUS_HI")
+      -- results go to Serial (detail) and OLED (PASS/FAIL line each)
+      -- a FAIL does NOT stop the test; flow continues
+
+ 7. A_2_R STROBE TEST
+      Serial "Running pulses A_2_R..." ; OLED "Running..."
+      Serial ">> set 1 (A_2_R)"
+      pulseStrobe(3, A_2_R)            ABUS lo = FF / 00 / FF, 3 strobes
+      wait 100 ms
+      Serial ">> set 2 (A_2_R)"
+      pulseStrobe(3, A_2_R)            repeat same sequence
+
+ 8. FINISH
+      Serial + OLED: "Done."
+
+
+--------------------------------------------------------------------------------
+ loop()
+--------------------------------------------------------------------------------
+      do nothing  (press RESET to re-run the whole test)
+
+
+--------------------------------------------------------------------------------
+ TIMELINE (approximate, from reset)
+--------------------------------------------------------------------------------
+   0.0 s   Serial start, 3 s USB wait
+   3.0 s   I2C / OLED / expander init
+   3.0 s   3 x loopback tests (~6 patterns x 5 ms each, ~0.1 s total)
+   3.1 s   Strobe set 1   (3 x 800 ms = 2.4 s)
+   5.5 s   100 ms gap
+   5.6 s   Strobe set 2   (2.4 s)
+   8.0 s   "Done."
+
+
+--------------------------------------------------------------------------------
+ EXPECTED OUTPUT (all good)
+--------------------------------------------------------------------------------
+ OLED:                      Serial:
+   RC_Test ready              === RC_Test ===
+   U2 DBUS: PASS              --- U2 DBUS GPB->GPA loopback ---
+   U3 ABUS_LO: PASS             write 0xFF rdGPB 0xFF rawGPA 0xFF rev 0xFF OK
+   U4 ABUS_HI: PASS             ... (6 lines per chip)
+   Running...                 U2 DBUS: LOOPBACK PASS
+   Done.                      ... (U3, U4 same)
+                              Running pulses A_2_R...
+                              >> set 1 (A_2_R)
+                              >> set 2 (A_2_R)
+                              Done.
+
+
+--------------------------------------------------------------------------------
+ OBSERVATIONS / NOTES
+--------------------------------------------------------------------------------
+ * D_2_RH (U7 GPB3) is #defined but never set to OUTPUT, so it floats as an
+   input. Harmless now (not used), but add pinMode/LOW if it is ever strobed,
+   or if the relay driver on that line needs a defined level.
+ * pulse() and pulseA0() are leftover helpers, not called in this flow.
+ * Only one of U7's strobes (A_2_R) is exercised; D_2_RL, LDH, LDL, LDHL are
+   just held LOW.
+ * DBUS and ABUS high are held at 0x00 during the strobe test; only ABUS low
+   toggles (FF/00/FF), so the R register should show the A[7:0] pattern
+   latched on each A_2_R pulse.
+ * An expander probe failure aborts setup() early, so later chips are not
+   reported. Chip probe order (U2, U3, U7, U4) differs from address order.
+ * The commented-out "mcp_U7.digitalWrite(A_2_R, LOW)" is redundant -
+   pulseStrobe() always ends with the strobe LOW.
+================================================================================
