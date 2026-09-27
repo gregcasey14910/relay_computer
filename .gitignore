@@ -15,3 +15,7 @@ build/
 *.bin
 *.elf
 *.map
+
+# Local backups / Claude Code settings
+*.bak
+.claude/
